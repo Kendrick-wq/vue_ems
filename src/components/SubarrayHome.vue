@@ -254,6 +254,7 @@ const allDevices = computed(() => {
 
 // 主机设备 - 始终显示（基于配置，即使没有实时数据）
 const masterDevice = computed(() => {
+  const masterStatus = systemConfig.value.slaveStatusMap?.[systemConfig.value.masterName] || {}
   // 如果有实时数据，优先使用
   if (devicesData.value.master) {
     // 确保 IP 和 SN 存在
@@ -263,6 +264,12 @@ const masterDevice = computed(() => {
     }
     if (!master.sn && systemConfig.value.masterSn) {
       master.sn = systemConfig.value.masterSn
+    }
+    if (master.work_state === undefined) {
+      master.work_state = masterStatus.work_state
+    }
+    if (!master.role) {
+      master.role = 'master'
     }
     return master
   }
@@ -275,6 +282,7 @@ const masterDevice = computed(() => {
       sn: systemConfig.value.masterSn || '',
       status: 'online',
       slave_id: 0,
+      work_state: masterStatus.work_state,
       pcs: {},
       bms: {}
     }
@@ -282,9 +290,11 @@ const masterDevice = computed(() => {
   return null
 })
 
-// 根据配置生成的从机列表（只包含 enabled=true 的）
+// 根据配置生成的从机列表（只包含 enabled=true 的，按 role 排序）
 const configuredSlaves = computed(() => {
-  return systemConfig.value.slaves.filter(s => s.enabled)
+  return systemConfig.value.slaves
+    .filter(s => s.enabled)
+    .sort((a, b) => (a.role || '').localeCompare(b.role || ''))
 })
 
 // 在线从机列表
@@ -333,18 +343,21 @@ function getSlaveData(slaveId) {
     return {
       ...data,
       ip_address: statusInfo.ip || data.ip_address || '',
-      sn: statusInfo.sn || data.sn || ''
+      sn: statusInfo.sn || data.sn || '',
+      work_state: data.work_state !== undefined ? data.work_state : statusInfo.work_state,
+      role: data.role || statusInfo.role || 'slave'
     }
   }
   
   // 如果没有数据，返回一个默认结构
   return {
     slave_id: slaveId,
-    role: 'slave',
+    role: statusInfo.role || 'slave',
     device_name: systemConfig.value.slaves.find(s => s.id === slaveId)?.name || `从机#${slaveId}`,
     status: statusInfo.online ? 'online' : 'offline',
     ip_address: statusInfo.ip || '',
     sn: statusInfo.sn || '',
+    work_state: statusInfo.work_state,
     pcs: {},
     bms: {}
   }

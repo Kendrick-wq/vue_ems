@@ -137,11 +137,12 @@ const nodeClass = computed(() => {
 
 // 工作状态文本
 const workStatusText = computed(() => {
-  // 优先使用全局系统数据中的workState，如果没有则使用设备状态
-  const workState = deviceData.value.workState
-  if (workState) return workState
-  
-  // 根据设备状态判断
+  const workState = deviceData.value.work_state
+  if (workState === 0) return '初始化'
+  if (workState === 1) return '停止'
+  if (workState === 2) return '故障'
+
+  // 兜底：根据设备状态判断
   const status = deviceData.value.status
   if (status === 'offline') return '离线'
   if (status === 'online') return '运行中'
@@ -150,6 +151,11 @@ const workStatusText = computed(() => {
 
 // 工作状态样式类
 const workStatusClass = computed(() => {
+  const workState = deviceData.value.work_state
+  if (workState === 0) return 'init'
+  if (workState === 1) return 'stopped'
+  if (workState === 2) return 'fault'
+
   const status = deviceData.value.status
   if (status === 'offline') return 'offline'
   if (status === 'online') return 'online'
@@ -158,8 +164,7 @@ const workStatusClass = computed(() => {
 
 // 角色文本
 const roleText = computed(() => {
-  if (deviceData.value.role === 'master') return '主机'
-  return '从机'
+  return deviceData.value.role || props.type || 'slave'
 })
 
 // 标签文本
@@ -360,6 +365,22 @@ function formatValue(value, unit) {
 .work-status.offline {
   background: rgba(239, 68, 68, 0.1);
   color: #dc2626;
+}
+
+.work-status.init {
+  background: rgba(148, 163, 184, 0.15);
+  color: #64748b;
+}
+
+.work-status.stopped {
+  background: rgba(245, 158, 11, 0.1);
+  color: #d97706;
+}
+
+.work-status.fault {
+  background: rgba(239, 68, 68, 0.12);
+  color: #dc2626;
+  font-weight: 600;
 }
 
 /* PCS模块 */

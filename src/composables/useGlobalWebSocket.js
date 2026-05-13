@@ -496,11 +496,12 @@ function updateSystemData(data) {
           ip: conn.ip || '',
           sn: conn.sn || '',
           status: conn.online ? 'Connected' : 'Disconnected',
-          role: conn.role || (isMaster ? 'master' : 'slave')
+          role: conn.role || (isMaster ? 'master' : 'slave'),
+          work_state: conn.work_state
         }
       })
 
-      slaves.sort((a, b) => a.name.localeCompare(b.name))
+      slaves.sort((a, b) => (a.role || '').localeCompare(b.role || ''))
       systemData.value.slaves = slaves
       systemData.value.slaveStatusMap = statusMap
       systemData.value.onlineCount = online
