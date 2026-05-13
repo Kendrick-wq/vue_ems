@@ -101,9 +101,11 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useGlobalWebSocket } from '../composables/useGlobalWebSocket.js'
 
 const route = useRoute()
 const router = useRouter()
+const { sendMessage, onMessage } = useGlobalWebSocket()
 
 const currentId = computed(() => route.params.id || '0')
 const slaveId = computed(() => parseInt(currentId.value))
@@ -252,53 +254,44 @@ function sendControlCommand(param, value) {
 }
 
 // 查询 PCS 数据
-function queryPCSData(slaveId) {
+function queryPCSData() {
   return new Promise((resolve, reject) => {
-    const savedSettings = localStorage.getItem('ems_ws_settings')
-    let wsUrl = 'ws://192.168.7.37:9713'
+    const clusterId = route.query.clusterId
+    const deviceName = route.query.name
     
-    if (savedSettings) {
-      try {
-        const settings = JSON.parse(savedSettings)
-        wsUrl = `ws://${settings.ip}:${settings.port}`
-      } catch (e) {}
+    if (!clusterId || !deviceName) {
+      reject(new Error('缺少子阵ID或设备名称'))
+      return
     }
     
-    try {
-      const ws = new WebSocket(wsUrl)
-      
-      ws.onopen = () => {
-        const request = {
-          topic: '/api/ems/pcs_data/get',
-          data: { slave_id: slaveId },
-          data_type: 'binary',
-          message_id: 'pcs_' + slaveId,
-          timestamp: new Date().toISOString()
+    const request = {
+      topic: '/api/ems/pcs_data/get',
+      data: { device: `${clusterId}/${deviceName}` },
+      data_type: 'binary',
+      message_id: 'pcs_' + slaveId.value,
+      timestamp: new Date().toISOString()
+    }
+    
+    const unsubscribe = onMessage((response) => {
+      if (response.topic === '/api/ems/pcs_data/get/response' || 
+          response.topic?.includes('pcs_data')) {
+        unsubscribe()
+        
+        const pcsData = response.data?.pcs_data || response.data?.pcs
+        if (response.data?.ret === true && pcsData) {
+          resolve(pcsData)
+        } else {
+          reject(new Error(response.data?.error || '获取失败'))
         }
-        ws.send(JSON.stringify(request))
       }
-      
-      ws.onmessage = (event) => {
-        const parseData = async () => {
-          const text = event.data instanceof Blob ? await event.data.text() : event.data
-          try {
-            const response = JSON.parse(text)
-            if (response.topic?.includes('pcs_data')) {
-              if (response.data?.ret === true && response.data?.pcs) {
-                resolve(response.data.pcs)
-              } else {
-                reject(new Error(response.data?.error || '获取失败'))
-              }
-              ws.close()
-            }
-          } catch (e) {}
-        }
-        parseData()
-      }
-      
-      ws.onerror = () => reject(new Error('连接失败'))
-      setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.close(); reject(new Error('超时')) }, 5000)
-    } catch (error) { reject(error) }
+    })
+    
+    sendMessage(request)
+    
+    setTimeout(() => {
+      unsubscribe()
+      reject(new Error('超时'))
+    }, 5000)
   })
 }
 
@@ -320,7 +313,7 @@ async function loadData() {
   
   if (!hasData.value) {
     try {
-      const data = await queryPCSData(slaveId.value)
+      const data = await queryPCSData()
       pcsData.value = {
         basic1: data.basic1 || [],
         basic2: data.basic2 || [],

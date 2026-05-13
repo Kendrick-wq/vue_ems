@@ -31,7 +31,7 @@
 
       <!-- 配置内容 -->
       <div v-else class="config-container">
-        <!-- RPC使能按钮 -->
+        <!-- RPC使能 + 设备信息 -->
         <div class="enable-section">
           <label class="enable-switch">
             <input type="checkbox" v-model="rpcConfig.enabled">
@@ -43,138 +43,197 @@
               <span class="device-label">当前设备:</span>
               <span class="device-value">{{ rpcConfig.server.name || '-' }}</span>
             </div>
-            <div v-if="rpcConfig.enabled && newDeviceName && newDeviceName !== rpcConfig.server?.name" class="device-info new-device">
-              <span class="device-label">新设备名:</span>
-              <span class="device-value">{{ newDeviceName }}</span>
-            </div>
           </div>
         </div>
 
-        <!-- 系统配置 -->
-        <div v-if="rpcConfig.enabled && rpcConfig.system" class="config-section">
-          <h3 class="section-title">系统配置</h3>
-          <div class="info-grid">
-            <div class="info-item">
-              <label>系统ID</label>
-              <select v-model="rpcConfig.system.system_id" class="form-select">
-                <option value="system1">system1</option>
-                <option value="system2">system2</option>
-                <option value="system3">system3</option>
-                <option value="system4">system4</option>
-              </select>
-            </div>
-            <div class="info-item">
-              <label>是否系统主机</label>
-              <select v-model="rpcConfig.system.is_system_master" class="form-select">
-                <option :value="true">是</option>
-                <option :value="false">否</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- 系统子阵主机连接 - 只在是系统主机时显示 -->
-          <div v-if="rpcConfig.system.is_system_master && rpcConfig.system.connections && rpcConfig.system.connections.length > 0" class="connections-container">
-            <h4 class="subsection-title">子阵主机连接 ({{ enabledSystemMasterCount }}/{{ totalSystemMasterCount }})</h4>
-            <div class="connections-grid">
-              <div
-                v-for="(conn, index) in rpcConfig.system.connections"
-                :key="index"
-                class="connection-card"
-                :class="{ enabled: conn.enabled }"
-              >
-                <div class="connection-header">
-                  <span class="conn-name">{{ conn.name }}</span>
-                  <label class="switch">
-                    <input type="checkbox" v-model="conn.enabled">
-                    <span class="slider"></span>
-                  </label>
-                </div>
-                <div class="connection-role">{{ getRoleText(conn.role) }}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 子阵配置 -->
-        <div v-if="rpcConfig.enabled && rpcConfig.subarray" class="config-section">
-          <h3 class="section-title">子阵配置</h3>
+        <!-- 身份配置 -->
+        <div v-if="rpcConfig.enabled" class="config-section">
+          <h3 class="section-title">身份配置</h3>
           <div class="info-grid">
             <div class="info-item">
               <label>子阵ID</label>
-              <select v-model="rpcConfig.subarray.subarray_id" class="form-select" @change="updateNewDeviceName">
-                <option value="subarray1">subarray1</option>
-                <option value="subarray2">subarray2</option>
-                <option value="subarray3">subarray3</option>
-                <option value="subarray4">subarray4</option>
-                <option value="subarray5">subarray5</option>
-                <option value="subarray6">subarray6</option>
-                <option value="subarray7">subarray7</option>
-                <option value="subarray8">subarray8</option>
+              <select v-model="rpcConfig.identity.subarray_id" class="form-select">
+                <option v-for="n in 8" :key="n" :value="`subarray${n}`">subarray{{ n }}</option>
               </select>
             </div>
             <div class="info-item">
-              <label>是否子阵主机</label>
-              <select v-model="rpcConfig.subarray.is_subarray_master" class="form-select" @change="updateNewDeviceName">
+              <label>角色</label>
+              <select v-model="rpcConfig.identity.role" class="form-select">
+                <option value="master">主机</option>
+                <option v-for="n in 16" :key="n" :value="`slave${n}`">从机{{ n }}</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- 子阵系统身份 -->
+        <div v-if="rpcConfig.enabled && isMaster" class="config-section">
+          <h3 class="section-title">子阵系统身份</h3>
+          <div class="info-grid">
+            <div class="info-item">
+              <label>所属系统ID</label>
+              <select v-model="rpcConfig.subarray.system_id" class="form-select">
+                <option v-for="n in 4" :key="n" :value="`system${n}`">system{{ n }}</option>
+              </select>
+            </div>
+            <div class="info-item">
+              <label>是否系统主子阵</label>
+              <select v-model="rpcConfig.subarray.is_master" class="form-select">
                 <option :value="true">是</option>
                 <option :value="false">否</option>
               </select>
             </div>
-            <!-- 从机ID选择 - 只在不是子阵主机时显示 -->
-            <div class="info-item" v-if="!rpcConfig.subarray.is_subarray_master">
-              <label>从机ID</label>
-              <select v-model="slaveId" class="form-select" @change="updateNewDeviceName">
-                <option v-for="id in 16" :key="id" :value="id">{{ id }}</option>
-              </select>
+          </div>
+        </div>
+
+        <!-- 子阵设备连接 -->
+        <div v-if="rpcConfig.enabled && isMaster" class="config-section">
+          <h3 class="section-title">子阵设备连接</h3>
+
+          <!-- 扫描按钮 -->
+          <div class="scan-bar">
+            <button class="btn-scan" @click="scanSubarray" :disabled="scanningSubarray">
+              <span v-if="scanningSubarray">🔍 扫描中...</span>
+              <span v-else>🔍 扫描子阵设备</span>
+            </button>
+            <span v-if="subarrayScanMessage" class="scan-message">{{ subarrayScanMessage }}</span>
+          </div>
+
+          <!-- 候选列表 -->
+          <div v-if="subarrayCandidates.length > 0" class="candidate-section">
+            <h4 class="subsection-title">
+              <span>扫描结果 (勾选后点击确认)</span>
+              <button class="btn-confirm" @click="confirmSubarray" :disabled="confirmingSubarray">
+                {{ confirmingSubarray ? '确认中...' : '✅ 确认连接' }}
+              </button>
+            </h4>
+            <div class="candidate-list">
+              <label
+                v-for="cand in subarrayCandidates"
+                :key="cand.name"
+                class="candidate-item"
+                :class="{ selected: cand.selected, existing: cand.existing }"
+              >
+                <input type="checkbox" v-model="cand.selected">
+                <span class="cand-subarray">{{ cand.name }}</span>
+                <span class="cand-host">{{ cand.role }}</span>
+                <span v-if="cand.name === rpcConfig.server?.name" class="cand-self">本机</span>
+                <span v-else class="cand-remote">远端</span>
+                <span v-if="cand.role === 'master'" class="cand-master-tag">主机</span>
+                <span v-else class="cand-slave-tag">从机</span>
+                <span v-if="cand.existing && cand.name !== rpcConfig.server?.name" class="cand-existing">已保存</span>
+              </label>
             </div>
           </div>
 
-          <!-- 子阵从机连接 - 只在是子阵主机时显示 -->
-          <div v-if="rpcConfig.subarray.is_subarray_master" class="connections-container">
+          <!-- 已保存的连接 -->
+          <div v-if="rpcConfig.subarray?.connections?.length > 0" class="saved-connections">
             <h4 class="subsection-title">
-              <span>从机连接 ({{ currentSubarrayConnections.filter(c => c.enabled).length }}/{{ currentSubarrayConnections.length }})</span>
-              <div class="conn-actions">
-                <button class="add-conn-btn" @click="addSlaveConnection">➕ 添加</button>
-                <button class="remove-conn-btn" @click="removeSlaveConnection">➖ 删除</button>
-              </div>
+              <span>已保存连接 ({{ enabledSubarrayConnCount }}/{{ rpcConfig.subarray.connections.length }})</span>
             </h4>
-            <div class="connections-grid">
+            <div class="connections-grid subarray-connections-grid">
               <div
-                v-for="(conn, index) in currentSubarrayConnections"
+                v-for="(conn, index) in sortedSubarrayConnections"
                 :key="conn.name"
-                class="connection-card"
-                :class="{ enabled: conn.enabled }"
+                class="connection-card subarray-connection-card"
+                :class="{ enabled: conn.enabled, self: conn.name === rpcConfig.server?.name }"},{
               >
-                <div class="connection-header">
-                  <span class="conn-name">{{ conn.name }}</span>
+                <div class="subarray-connection-row">
+                  <span class="conn-subarray-bold">{{ conn.name }}</span>
                   <label class="switch" @click.stop>
                     <input type="checkbox" v-model="conn.enabled">
                     <span class="slider"></span>
                   </label>
                 </div>
-                <div class="connection-role">{{ getRoleText(conn.role) }}</div>
+                <div class="subarray-connection-row">
+                  <span class="conn-host-light">{{ conn.role || (conn.name === rpcConfig.server?.name ? rpcConfig.identity?.role : 'slave') }}</span>
+                </div>
+                <div class="subarray-connection-tags">
+                  <span v-if="conn.name === rpcConfig.server?.name" class="tag-self">本机</span>
+                  <span v-else class="tag-remote">远端</span>
+                  <span v-if="conn.role === 'master' || conn.name === rpcConfig.server?.name" class="tag-master">主机</span>
+                  <span v-else class="tag-slave">从机</span>
+                </div>
               </div>
             </div>
           </div>
+
+          <div v-if="!subarrayCandidates.length && !rpcConfig.subarray?.connections?.length" class="empty-state">
+            暂无连接，点击"扫描子阵设备"发现设备
+          </div>
         </div>
 
-        <!-- 即将下发的设备名称提示 -->
-        <div v-if="newDeviceName && newDeviceName !== rpcConfig.server?.name" class="new-name-preview">
-          <span class="preview-label">即将下发的设备名称:</span>
-          <span class="preview-value">{{ newDeviceName }}</span>
-        </div>
+        <!-- 系统子阵连接 -->
+        <div v-if="rpcConfig.enabled && isMaster && rpcConfig.subarray?.is_master" class="config-section">
+          <h3 class="section-title">系统子阵连接</h3>
 
-        <!-- 即将下发的从机连接提示（仅在子阵ID改变时显示） -->
-        <div v-if="rpcConfig.subarray?.is_subarray_master && hasSubarrayIdChanged && previewConnections.length > 0" class="new-name-preview connections-preview">
-          <span class="preview-label">即将下发的从机连接:</span>
-          <div class="preview-connections">
-            <span
-              v-for="(conn, index) in previewConnections"
-              :key="index"
-              class="preview-conn-tag"
-              :class="{ enabled: conn.enabled }"
-            >
-              {{ conn.name }} {{ conn.enabled ? '(启用)' : '(禁用)' }}
-            </span>
+          <!-- 扫描按钮 -->
+          <div class="scan-bar">
+            <button class="btn-scan" @click="scanSystem" :disabled="scanningSystem">
+              <span v-if="scanningSystem">🔍 扫描中...</span>
+              <span v-else>🔍 扫描系统子阵</span>
+            </button>
+            <span v-if="systemScanMessage" class="scan-message">{{ systemScanMessage }}</span>
+          </div>
+
+          <!-- 候选列表 -->
+          <div v-if="systemCandidates.length > 0" class="candidate-section">
+            <h4 class="subsection-title">
+              <span>扫描结果 (勾选后点击确认)</span>
+              <button class="btn-confirm" @click="confirmSystem" :disabled="confirmingSystem">
+                {{ confirmingSystem ? '确认中...' : '✅ 确认连接' }}
+              </button>
+            </h4>
+            <div class="candidate-list">
+              <label
+                v-for="cand in systemCandidates"
+                :key="cand.name"
+                class="candidate-item"
+                :class="{ selected: cand.selected, existing: cand.existing, self: cand.name === rpcConfig.server?.name }"
+              >
+                <input type="checkbox" v-model="cand.selected">
+                <span class="cand-subarray">{{ cand.subarray_id }}</span>
+                <span class="cand-host">{{ cand.name }}</span>
+                <span v-if="cand.name === rpcConfig.server?.name" class="cand-self">本机</span>
+                <span v-else-if="cand.existing" class="cand-existing">已保存</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 已保存的连接 -->
+          <div v-if="rpcConfig.system?.connections?.length > 0" class="saved-connections">
+            <h4 class="subsection-title">
+              <span>已保存连接 ({{ enabledSystemConnCount }}/{{ rpcConfig.system.connections.length }})</span>
+            </h4>
+            <div class="connections-grid system-connections-grid">
+              <div
+                v-for="(conn, index) in sortedSystemConnections"
+                :key="conn.name"
+                class="connection-card system-connection-card"
+                :class="{ enabled: conn.enabled, self: conn.name === rpcConfig.server?.name }"
+              >
+                <div class="system-connection-row">
+                  <span class="conn-subarray-bold">{{ conn.subarray_id }}</span>
+                  <label class="switch" @click.stop>
+                    <input type="checkbox" v-model="conn.enabled">
+                    <span class="slider"></span>
+                  </label>
+                </div>
+                <div class="system-connection-row">
+                  <span class="conn-host-light">{{ conn.name }}</span>
+                </div>
+                <div class="system-connection-tags">
+                  <span v-if="conn.name === rpcConfig.server?.name" class="tag-self">本机</span>
+                  <span v-else class="tag-remote">远端</span>
+                  <span v-if="conn.subarray_id && rpcConfig.subarray?.is_master && conn.name === rpcConfig.server?.name" class="tag-master">主子阵</span>
+                  <span v-else-if="conn.subarray_id && !rpcConfig.subarray?.is_master && conn.name === rpcConfig.server?.name" class="tag-slave">子阵</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="!systemCandidates.length && !rpcConfig.system?.connections?.length" class="empty-state">
+            暂无连接，点击"扫描系统子阵"发现设备
           </div>
         </div>
 
@@ -210,12 +269,13 @@ const router = useRouter()
 // WebSocket 实例
 let ws = null
 
-// RPC配置数据
+// RPC配置数据（新结构）
 const rpcConfig = ref({
   enabled: false,
   server: null,
-  subarray: null,
+  identity: null,
   system: null,
+  subarray: null,
   timeouts: null
 })
 
@@ -227,183 +287,62 @@ const hasLoaded = ref(false)
 const showRawConfig = ref(false)
 const saveMessage = ref('')
 const saveSuccess = ref(false)
-const slaveId = ref(1)
-const newDeviceName = ref('')
-const originalSubarrayId = ref('') // 记录原始的子阵ID，用于检测是否改变
-const originalConnections = ref([]) // 记录原始从机连接配置，用于子阵ID改变时正确删除旧连接
 
-// 计算属性：子阵已启用从机数量
-const enabledSlaveCount = computed(() => {
+// 扫描状态
+const scanningSubarray = ref(false)
+const confirmingSubarray = ref(false)
+const subarrayCandidates = ref([])
+const subarrayScanMessage = ref('')
+
+const scanningSystem = ref(false)
+const confirmingSystem = ref(false)
+const systemCandidates = ref([])
+const systemScanMessage = ref('')
+
+// 计算属性：是否为子阵主机
+const isMaster = computed(() => {
+  return rpcConfig.value.identity?.role === 'master'
+})
+
+// 计算属性：角色文本
+const roleText = computed(() => {
+  const role = rpcConfig.value.identity?.role
+  return role === 'master' ? '子阵主机' : (role === 'slave' ? '从机' : '-')
+})
+
+// 计算属性：已启用的子阵连接数
+const enabledSubarrayConnCount = computed(() => {
   if (!rpcConfig.value.subarray?.connections) return 0
   return rpcConfig.value.subarray.connections.filter(c => c.enabled).length
 })
 
-// 计算属性：系统已启用子阵主机数量（包含自己）
-const enabledSystemMasterCount = computed(() => {
-  if (!rpcConfig.value.system?.connections) return 1
-  return 1 + rpcConfig.value.system.connections.filter(c => c.enabled).length
+// 计算属性：已启用的系统连接数
+const enabledSystemConnCount = computed(() => {
+  if (!rpcConfig.value.system?.connections) return 0
+  return rpcConfig.value.system.connections.filter(c => c.enabled).length
 })
 
-// 计算属性：系统总子阵主机数量（包含自己）
-const totalSystemMasterCount = computed(() => {
-  if (!rpcConfig.value.system?.connections) return 1
-  return 1 + rpcConfig.value.system.connections.length
-})
-
-// 更新新设备名称预览
-function updateNewDeviceName() {
-  if (!rpcConfig.value.subarray?.subarray_id) {
-    newDeviceName.value = ''
-    return
-  }
-
-  const subarrayNum = rpcConfig.value.subarray.subarray_id.replace('subarray', '')
-
-  if (rpcConfig.value.subarray.is_subarray_master) {
-    // 主机命名: master{子阵数字}
-    newDeviceName.value = `master${subarrayNum}`
-  } else {
-    // 从机命名: slave{子阵数字}_{从机ID}
-    newDeviceName.value = `slave${subarrayNum}_${slaveId.value}`
-  }
-}
-
-// 计算属性：从机连接列表（不过滤，后端传什么就显示什么）
-const currentSubarrayConnections = computed(() => {
-  return rpcConfig.value.subarray?.connections || []
-})
-
-// 计算属性：子阵ID是否已改变
-const hasSubarrayIdChanged = computed(() => {
-  return originalSubarrayId.value &&
-         originalSubarrayId.value !== rpcConfig.value.subarray?.subarray_id
-})
-
-// 计算属性：即将下发的从机连接预览（不修改原始数据）
-// 逻辑：优先使用原始数据中本身就属于新子阵的连接；如果没有，才把旧子阵的连接变换过去
-const previewConnections = computed(() => {
-  if (!rpcConfig.value.subarray?.is_subarray_master || !rpcConfig.value.subarray?.connections) {
-    return []
-  }
-
-  const subarrayNum = rpcConfig.value.subarray.subarray_id.replace('subarray', '')
-  const connections = rpcConfig.value.subarray.connections
-
-  // 先尝试找出原始数据中本身就属于新子阵的连接
-  const newSubarrayConns = connections.filter(conn => {
-    const match = conn.name.match(/^slave(\d+)_(\d+)$/)
-    return match && match[1] === subarrayNum
-  }).map(conn => ({ ...conn }))
-
-  if (newSubarrayConns.length > 0) {
-    // 有新子阵的历史连接，只返回它们，避免重复下发
-    return newSubarrayConns
-  }
-
-  // 没有新子阵的历史连接，才把旧子阵的连接变换成新子阵的
-  const oldSubarrayNum = originalSubarrayId.value.replace('subarray', '')
-  return connections
-    .filter(conn => {
-      const match = conn.name.match(/^slave(\d+)_(\d+)$/)
-      return match && match[1] === oldSubarrayNum
-    })
-    .map(conn => {
-      const match = conn.name.match(/^slave(\d+)_(\d+)$/)
-      const slaveNum = match[2]
-      return { ...conn, name: `slave${subarrayNum}_${slaveNum}` }
-    })
-})
-
-// 添加从机连接
-function addSlaveConnection() {
-  if (!rpcConfig.value.subarray?.is_subarray_master) return
-
-  if (!rpcConfig.value.subarray.connections) {
-    rpcConfig.value.subarray.connections = []
-  }
-
-  const subarrayNum = rpcConfig.value.subarray.subarray_id.replace('subarray', '')
-  const connections = rpcConfig.value.subarray.connections
-
-  // 找出当前最大的从机编号
-  let maxId = 0
-  connections.forEach(conn => {
-    const match = conn.name.match(/^slave\d+_(\d+)$/)
-    if (match) {
-      const id = parseInt(match[1])
-      if (id > maxId) maxId = id
-    }
+// 计算属性：排序后的子阵连接（本机排第一）
+const sortedSubarrayConnections = computed(() => {
+  if (!rpcConfig.value.subarray?.connections) return []
+  const selfName = rpcConfig.value.server?.name || ''
+  return [...rpcConfig.value.subarray.connections].sort((a, b) => {
+    const aIsSelf = a.name === selfName ? 1 : 0
+    const bIsSelf = b.name === selfName ? 1 : 0
+    return bIsSelf - aIsSelf
   })
+})
 
-  const newName = `slave${subarrayNum}_${maxId + 1}`
-  connections.push({
-    name: newName,
-    enabled: false
+// 计算属性：排序后的系统连接（本机排第一）
+const sortedSystemConnections = computed(() => {
+  if (!rpcConfig.value.system?.connections) return []
+  const selfName = rpcConfig.value.server?.name || ''
+  return [...rpcConfig.value.system.connections].sort((a, b) => {
+    const aIsSelf = a.name === selfName ? 1 : 0
+    const bIsSelf = b.name === selfName ? 1 : 0
+    return bIsSelf - aIsSelf
   })
-}
-
-// 删除从机连接（删除编号最大的一个）
-function removeSlaveConnection() {
-  if (!rpcConfig.value.subarray?.is_subarray_master) return
-
-  const connections = rpcConfig.value.subarray.connections
-  if (!connections || connections.length === 0) return
-
-  // 找出编号最大的连接索引
-  let maxId = -1
-  let maxIndex = -1
-  connections.forEach((conn, idx) => {
-    const match = conn.name.match(/^slave\d+_(\d+)$/)
-    if (match) {
-      const id = parseInt(match[1])
-      if (id > maxId) {
-        maxId = id
-        maxIndex = idx
-      }
-    }
-  })
-
-  if (maxIndex >= 0) {
-    const removed = connections.splice(maxIndex, 1)
-    console.log('[RPC] 删除从机连接:', removed[0]?.name)
-  }
-}
-
-// 获取角色文本
-function getRoleText(role) {
-  const roleMap = {
-    'slave': '从机',
-    'subarray_master': '子阵主机',
-    'system_master': '系统主机'
-  }
-  return roleMap[role] || role || '-'
-}
-
-// 获取角色样式类
-function getRoleClass(role) {
-  if (role === 'subarray_master') return 'subarray-master'
-  if (role === 'system_master') return 'system-master'
-  return ''
-}
-
-// 更新从机名称
-function updateSlaveName() {
-  if (!rpcConfig.value.subarray || rpcConfig.value.subarray.is_subarray_master) {
-    return
-  }
-
-  // 从子阵ID中提取数字，例如 "subarray2" -> "2"
-  const subarrayIdMatch = rpcConfig.value.subarray.subarray_id?.match(/\d+/)
-  const subarrayNum = subarrayIdMatch ? subarrayIdMatch[0] : '1'
-
-  // 生成从机名称，格式: slave_子阵数字_从机ID
-  const slaveName = `slave_${subarrayNum}_${slaveId.value}`
-
-  // 更新server.name
-  if (rpcConfig.value.server) {
-    rpcConfig.value.server.name = slaveName
-  }
-}
+})
 
 // 获取WebSocket连接
 function getWebSocket() {
@@ -495,52 +434,32 @@ async function loadConfig() {
 
     if (response.data?.success && response.data?.rpc) {
       rpcConfig.value = response.data.rpc
-      hasLoaded.value = true
 
-      // 记录原始子阵ID和原始连接配置
-      if (rpcConfig.value.subarray?.subarray_id) {
-        originalSubarrayId.value = rpcConfig.value.subarray.subarray_id
-      }
-      if (rpcConfig.value.subarray?.connections) {
-        originalConnections.value = JSON.parse(JSON.stringify(rpcConfig.value.subarray.connections))
-      }
-
-      // 如果是从机，从设备名称中解析从机ID
-      if (rpcConfig.value.subarray && !rpcConfig.value.subarray.is_subarray_master && rpcConfig.value.server?.name) {
-        const slaveIdMatch = rpcConfig.value.server.name.match(/slave_\d+_(\d+)/)
-        if (slaveIdMatch) {
-          slaveId.value = parseInt(slaveIdMatch[1])
+      // 确保新结构字段存在（兼容旧配置）
+      if (!rpcConfig.value.identity) {
+        rpcConfig.value.identity = {
+          subarray_id: rpcConfig.value.subarray?.subarray_id || 'subarray1',
+          role: rpcConfig.value.subarray?.is_subarray_master ? 'master' : 'slave1'
         }
       }
+      // 兼容旧格式的 "slave"（无编号），统一为 "slave1"
+      if (rpcConfig.value.identity.role === 'slave') {
+        rpcConfig.value.identity.role = 'slave1'
+      }
+      if (!rpcConfig.value.subarray) {
+        rpcConfig.value.subarray = { connections: [] }
+      }
+      if (!rpcConfig.value.system) {
+        rpcConfig.value.system = { connections: [] }
+      }
+      if (!rpcConfig.value.subarray.system_id) {
+        rpcConfig.value.subarray.system_id = 'system1'
+      }
+      if (rpcConfig.value.subarray.is_master === undefined) {
+        rpcConfig.value.subarray.is_master = false
+      }
 
-      // 初始化新设备名称（加载配置时不重命名连接，保持后端原始数据）
-      updateNewDeviceName(false)
-
-      console.log('[RPC] 配置已加载:', rpcConfig.value)
-    } else if (response.data?.success && response.data?.config) {
-      // 兼容旧格式
-      rpcConfig.value = response.data.config
       hasLoaded.value = true
-
-      // 记录原始子阵ID和原始连接配置
-      if (rpcConfig.value.subarray?.subarray_id) {
-        originalSubarrayId.value = rpcConfig.value.subarray.subarray_id
-      }
-      if (rpcConfig.value.subarray?.connections) {
-        originalConnections.value = JSON.parse(JSON.stringify(rpcConfig.value.subarray.connections))
-      }
-
-      // 如果是从机，从设备名称中解析从机ID
-      if (rpcConfig.value.subarray && !rpcConfig.value.subarray.is_subarray_master && rpcConfig.value.server?.name) {
-        const slaveIdMatch = rpcConfig.value.server.name.match(/slave_\d+_(\d+)/)
-        if (slaveIdMatch) {
-          slaveId.value = parseInt(slaveIdMatch[1])
-        }
-      }
-
-      // 初始化新设备名称（加载配置时不重命名连接，保持后端原始数据）
-      updateNewDeviceName(false)
-
       console.log('[RPC] 配置已加载:', rpcConfig.value)
     } else {
       error.value = response.data?.error || '获取配置失败'
@@ -553,7 +472,183 @@ async function loadConfig() {
   }
 }
 
-// 保存配置
+// 扫描子阵从机
+async function scanSubarray() {
+  scanningSubarray.value = true
+  subarrayScanMessage.value = ''
+  subarrayCandidates.value = []
+
+  try {
+    const socket = await getWebSocket()
+    const request = {
+      topic: 'rpc/subarray/scan',
+      data: {},
+      data_type: 'binary',
+      message_id: 'scan_sub_' + Date.now(),
+      timestamp: new Date().toISOString()
+    }
+
+    const response = await sendRequest(socket, request, 'rpc/subarray/scan::response')
+
+    if (response.data?.success) {
+      const candidates = response.data.candidates || []
+      const savedMap = new Map((rpcConfig.value.subarray?.connections || []).map(c => [c.name, c.enabled]))
+
+      subarrayCandidates.value = candidates.map(c => ({
+        ...c,
+        selected: true,
+        existing: savedMap.has(c.name)
+      }))
+
+      const newCount = subarrayCandidates.value.filter(c => !c.existing).length
+      subarrayScanMessage.value = `发现 ${candidates.length} 个设备，其中 ${newCount} 个新设备`
+    } else {
+      subarrayScanMessage.value = response.data?.error || '扫描失败'
+    }
+  } catch (err) {
+    console.error('[RPC] 扫描子阵失败:', err)
+    subarrayScanMessage.value = err.message || '扫描失败'
+  } finally {
+    scanningSubarray.value = false
+  }
+}
+
+// 确认子阵连接
+async function confirmSubarray() {
+  const selected = subarrayCandidates.value.filter(c => c.selected)
+  if (selected.length === 0) {
+    subarrayScanMessage.value = '请至少选择一个设备'
+    return
+  }
+
+  confirmingSubarray.value = true
+  subarrayScanMessage.value = ''
+
+  try {
+    const socket = await getWebSocket()
+    const connections = selected.map(c => ({
+      name: c.name,
+      enabled: true,
+      role: c.role || (c.name === rpcConfig.value.server?.name ? rpcConfig.value.identity?.role : '')
+    }))
+
+    const request = {
+      topic: 'rpc/subarray/confirm',
+      data: {
+        connections: JSON.stringify(connections)
+      },
+      data_type: 'binary',
+      message_id: 'confirm_sub_' + Date.now(),
+      timestamp: new Date().toISOString()
+    }
+
+    const response = await sendRequest(socket, request, 'rpc/subarray/confirm::response')
+
+    if (response.data?.success) {
+      subarrayScanMessage.value = response.data.message || '子阵连接已保存'
+      subarrayCandidates.value = []
+      // 重新加载配置
+      await loadConfig()
+    } else {
+      subarrayScanMessage.value = response.data?.error || '确认失败'
+    }
+  } catch (err) {
+    console.error('[RPC] 确认子阵连接失败:', err)
+    subarrayScanMessage.value = err.message || '确认失败'
+  } finally {
+    confirmingSubarray.value = false
+  }
+}
+
+// 扫描系统子阵
+async function scanSystem() {
+  scanningSystem.value = true
+  systemScanMessage.value = ''
+  systemCandidates.value = []
+
+  try {
+    const socket = await getWebSocket()
+    const request = {
+      topic: 'rpc/system/scan',
+      data: {},
+      data_type: 'binary',
+      message_id: 'scan_sys_' + Date.now(),
+      timestamp: new Date().toISOString()
+    }
+
+    const response = await sendRequest(socket, request, 'rpc/system/scan::response')
+
+    if (response.data?.success) {
+      const candidates = response.data.candidates || []
+      const savedMap = new Map((rpcConfig.value.system?.connections || []).map(c => [c.name, c.enabled]))
+
+      systemCandidates.value = candidates.map(c => ({
+        ...c,
+        selected: true,
+        existing: savedMap.has(c.name)
+      }))
+
+      const newCount = systemCandidates.value.filter(c => !c.existing).length
+      systemScanMessage.value = `发现 ${candidates.length} 个子阵，其中 ${newCount} 个新子阵`
+    } else {
+      systemScanMessage.value = response.data?.error || '扫描失败'
+    }
+  } catch (err) {
+    console.error('[RPC] 扫描系统失败:', err)
+    systemScanMessage.value = err.message || '扫描失败'
+  } finally {
+    scanningSystem.value = false
+  }
+}
+
+// 确认系统连接
+async function confirmSystem() {
+  const selected = systemCandidates.value.filter(c => c.selected)
+  if (selected.length === 0) {
+    systemScanMessage.value = '请至少选择一个子阵'
+    return
+  }
+
+  confirmingSystem.value = true
+  systemScanMessage.value = ''
+
+  try {
+    const socket = await getWebSocket()
+    const connections = selected.map(c => ({
+      name: c.name,
+      subarray_id: c.subarray_id,
+      enabled: true
+    }))
+
+    const request = {
+      topic: 'rpc/system/confirm',
+      data: {
+        connections: JSON.stringify(connections)
+      },
+      data_type: 'binary',
+      message_id: 'confirm_sys_' + Date.now(),
+      timestamp: new Date().toISOString()
+    }
+
+    const response = await sendRequest(socket, request, 'rpc/system/confirm::response')
+
+    if (response.data?.success) {
+      systemScanMessage.value = response.data.message || '系统连接已保存'
+      systemCandidates.value = []
+      // 重新加载配置
+      await loadConfig()
+    } else {
+      systemScanMessage.value = response.data?.error || '确认失败'
+    }
+  } catch (err) {
+    console.error('[RPC] 确认系统连接失败:', err)
+    systemScanMessage.value = err.message || '确认失败'
+  } finally {
+    confirmingSystem.value = false
+  }
+}
+
+// 保存配置（identity + system 基本信息）
 async function saveConfig() {
   saving.value = true
   saveMessage.value = ''
@@ -563,100 +658,19 @@ async function saveConfig() {
 
     // 构建changes对象，只包含需要更新的字段
     const changes = {
-      enabled: rpcConfig.value.enabled
-    }
-
-    // 如果新设备名称与当前不同，添加server.name配置
-    if (newDeviceName.value && newDeviceName.value !== rpcConfig.value.server?.name) {
-      changes.server = {
-        name: newDeviceName.value
+      enabled: rpcConfig.value.enabled,
+      identity: {
+        subarray_id: rpcConfig.value.identity.subarray_id,
+        role: rpcConfig.value.identity.role
       }
     }
 
-    // 添加子阵配置
-    if (rpcConfig.value.subarray) {
+    // 添加子阵系统身份配置
+    if (isMaster.value && rpcConfig.value.subarray) {
       changes.subarray = {
-        subarray_id: rpcConfig.value.subarray.subarray_id,
-        is_subarray_master: rpcConfig.value.subarray.is_subarray_master
-      }
-
-      // 检测子阵ID是否改变
-      const subarrayIdChanged = originalSubarrayId.value &&
-                                originalSubarrayId.value !== rpcConfig.value.subarray.subarray_id
-
-      if (subarrayIdChanged && rpcConfig.value.subarray.is_subarray_master) {
-        // 子阵ID改变了，先删除旧子阵连接，再添加新子阵连接
-        const oldSubarrayNum = originalSubarrayId.value.replace('subarray', '')
-
-        // 从原始连接配置中找出旧子阵的从机连接（标记删除）
-        const oldConnections = originalConnections.value.filter(c => {
-          const match = c.name.match(/^slave(\d+)_(\d+)$/)
-          return match && match[1] === oldSubarrayNum
-        })
-
-        // 使用预览连接作为即将下发的新连接
-        const newConnections = previewConnections.value
-
-        // 构建连接配置：旧连接标记删除，新连接直接添加
-        changes.subarray.connections = [
-          ...oldConnections.map(c => ({
-            name: c.name,
-            enabled: false,
-            role: c.role,
-            _delete: true  // 标记为删除
-          })),
-          ...newConnections.map(c => ({
-            name: c.name,
-            enabled: c.enabled,
-            role: c.role
-          }))
-        ]
-
-        console.log('[RPC] 子阵ID改变，删除旧连接:', oldConnections.map(c => c.name))
-        console.log('[RPC] 子阵ID改变，添加新连接:', newConnections.map(c => c.name))
-      } else {
-        // 子阵ID没有改变，正常更新连接配置
-        // 需要找出被删除的连接（在 originalConnections 中有，但当前没有），带上 _delete 标记
-        const currentConnections = rpcConfig.value.subarray.connections || []
-        const currentNames = new Set(currentConnections.map(c => c.name))
-        const deletedConnections = originalConnections.value.filter(c => !currentNames.has(c.name))
-
-        changes.subarray.connections = [
-          // 被删除的连接标记为删除
-          ...deletedConnections.map(c => ({
-            name: c.name,
-            enabled: false,
-            role: c.role,
-            _delete: true
-          })),
-          // 当前保留的连接正常更新
-          ...currentConnections.map(c => ({
-            name: c.name,
-            enabled: c.enabled,
-            role: c.role
-          }))
-        ]
-
-        if (deletedConnections.length > 0) {
-          console.log('[RPC] 删除从机连接:', deletedConnections.map(c => c.name))
-        }
-      }
-    }
-
-    // 添加系统配置
-    if (rpcConfig.value.system) {
-      changes.system = {
-        system_id: rpcConfig.value.system.system_id,
-        is_system_master: rpcConfig.value.system.is_system_master
-      }
-
-      // 添加系统连接配置
-      if (rpcConfig.value.system.connections && rpcConfig.value.system.connections.length > 0) {
-        changes.system.connections = rpcConfig.value.system.connections.map(c => ({
-          name: c.name,
-          enabled: c.enabled,
-          role: c.role
-        }))
+        ...changes.subarray,
+        system_id: rpcConfig.value.subarray.system_id,
+        is_master: rpcConfig.value.subarray.is_master
       }
     }
 
@@ -673,30 +687,14 @@ async function saveConfig() {
     const response = await sendRequest(socket, request, 'rpc/updateConfig::response')
 
     if (response.data?.success) {
-      saveMessage.value = response.data.message || '配置已保存，重启后生效'
+      saveMessage.value = response.data.message || '配置已保存'
       saveSuccess.value = true
-
-      // 更新原始子阵ID和原始连接配置为当前值
-      if (rpcConfig.value.subarray?.subarray_id) {
-        originalSubarrayId.value = rpcConfig.value.subarray.subarray_id
-      }
-      if (rpcConfig.value.subarray?.connections) {
-        originalConnections.value = JSON.parse(JSON.stringify(rpcConfig.value.subarray.connections))
-      }
 
       // 如果后端返回了更新后的配置，刷新本地配置
       if (response.data?.config) {
         rpcConfig.value = response.data.config
-        // 同步更新原始连接配置
-        if (rpcConfig.value.subarray?.connections) {
-          originalConnections.value = JSON.parse(JSON.stringify(rpcConfig.value.subarray.connections))
-        }
-        console.log('[RPC] 配置已更新:', rpcConfig.value)
       } else {
-        // 否则重新加载配置
-        setTimeout(() => {
-          loadConfig()
-        }, 1000)
+        setTimeout(() => loadConfig(), 1000)
       }
     } else {
       saveMessage.value = response.data?.error || '保存配置失败'
@@ -708,11 +706,7 @@ async function saveConfig() {
     saveSuccess.value = false
   } finally {
     saving.value = false
-
-    // 3秒后清除消息
-    setTimeout(() => {
-      saveMessage.value = ''
-    }, 3000)
+    setTimeout(() => { saveMessage.value = '' }, 3000)
   }
 }
 
@@ -944,92 +938,11 @@ onMounted(() => {
   font-family: 'SF Mono', Monaco, monospace;
 }
 
-.new-device-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  background: #fef3c7;
-  border-radius: 6px;
-  border: 1px solid #fcd34d;
-}
-
-.new-device-label {
-  font-size: 13px;
-  color: #92400e;
-  font-weight: 500;
-}
-
-.new-device-value {
-  font-size: 13px;
-  color: #92400e;
-  font-weight: 600;
-  font-family: 'SF Mono', Monaco, monospace;
-}
-
 .device-info-group {
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-/* 新设备名称预览 */
-.new-name-preview {
-  background: #fff;
-  border-radius: 8px;
-  padding: 12px 20px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border: 2px solid #fbbf24;
-  background: #fffbeb;
-}
-
-.preview-label {
-  font-size: 13px;
-  color: #92400e;
-  font-weight: 600;
-}
-
-.preview-value {
-  font-size: 14px;
-  color: #92400e;
-  font-weight: 700;
-  font-family: 'SF Mono', Monaco, monospace;
-  padding: 4px 12px;
-  background: #fef3c7;
-  border-radius: 6px;
-  border: 1px solid #fcd34d;
-}
-
-.connections-preview {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.preview-connections {
-  display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-}
-
-.preview-conn-tag {
-  font-size: 13px;
-  color: #92400e;
-  font-weight: 600;
-  font-family: 'SF Mono', Monaco, monospace;
-  padding: 4px 10px;
-  background: #fef3c7;
-  border-radius: 6px;
-  border: 1px solid #fcd34d;
-}
-
-.preview-conn-tag.enabled {
-  background: #d1fae5;
-  color: #065f46;
-  border-color: #6ee7b7;
 }
 
 /* 配置区块 */
@@ -1080,177 +993,6 @@ onMounted(() => {
   letter-spacing: 0.5px;
 }
 
-.value-text {
-  font-size: 13px;
-  color: #1e293b;
-  font-weight: 500;
-  padding: 6px 10px;
-  background: #f8fafc;
-  border-radius: 6px;
-  border: 1px solid #e2e8f0;
-}
-
-.device-name {
-  font-size: 13px;
-  color: #1e293b;
-  font-weight: 500;
-  padding: 6px 10px;
-  background: #f0f9ff;
-  border-radius: 6px;
-  border: 1px solid #bae6fd;
-  font-family: 'SF Mono', Monaco, monospace;
-}
-
-/* 状态徽章 */
-.status-badge {
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  text-align: center;
-  background: #fee2e2;
-  color: #991b1b;
-  border: 1px solid #fca5a5;
-}
-
-.status-badge.enabled {
-  background: #d1fae5;
-  color: #065f46;
-  border: 1px solid #6ee7b7;
-}
-
-/* 角色徽章 */
-.role-badge {
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  text-align: center;
-  background: #f1f5f9;
-  color: #475569;
-  border: 1px solid #cbd5e1;
-}
-
-.role-badge.subarray-master {
-  background: #dbeafe;
-  color: #1e40af;
-  border: 1px solid #93c5fd;
-}
-
-.role-badge.system-master {
-  background: #fef3c7;
-  color: #92400e;
-  border: 1px solid #fcd34d;
-}
-
-/* 连接网格 */
-.connections-container {
-  margin-top: 10px;
-}
-
-.connections-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 8px;
-}
-
-.connection-card {
-  background: #f8fafc;
-  border: 2px solid #e2e8f0;
-  border-radius: 6px;
-  padding: 8px 10px;
-  transition: all 0.2s;
-}
-
-.connection-card.enabled {
-  background: #ecfdf5;
-  border-color: #10b981;
-}
-
-.conn-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.add-conn-btn {
-  padding: 4px 10px;
-  border: 1px solid #10b981;
-  background: #fff;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  color: #10b981;
-  transition: all 0.2s;
-}
-
-.add-conn-btn:hover {
-  background: #10b981;
-  color: #fff;
-}
-
-.remove-conn-btn {
-  padding: 4px 10px;
-  border: 1px solid #ef4444;
-  background: #fff;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  color: #ef4444;
-  transition: all 0.2s;
-}
-
-.remove-conn-btn:hover {
-  background: #ef4444;
-  color: #fff;
-}
-
-.connection-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.conn-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: #1e293b;
-  font-family: 'SF Mono', Monaco, monospace;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conn-status {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: bold;
-  background: #fee2e2;
-  color: #991b1b;
-  flex-shrink: 0;
-}
-
-.conn-status.enabled {
-  background: #d1fae5;
-  color: #065f46;
-}
-
-.connection-role {
-  font-size: 11px;
-  color: #64748b;
-  padding: 3px 6px;
-  background: #f1f5f9;
-  border-radius: 4px;
-  display: inline-block;
-}
-
 /* 表单选择框 */
 .form-select {
   padding: 6px 10px;
@@ -1269,12 +1011,377 @@ onMounted(() => {
   box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.1);
 }
 
+/* 扫描栏 */
+.scan-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.btn-scan {
+  padding: 6px 14px;
+  border: 1px solid #3b82f6;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #3b82f6;
+  transition: all 0.2s;
+}
+
+.btn-scan:hover:not(:disabled) {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.btn-scan:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.scan-message {
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* 候选列表 */
+.candidate-section {
+  background: #f8fafc;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.candidate-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.candidate-item:hover {
+  border-color: #3b82f6;
+}
+
+.candidate-item.selected {
+  border-color: #10b981;
+  background: #ecfdf5;
+}
+
+.candidate-item.existing {
+  background: #f0f9ff;
+}
+
+.candidate-item.existing.selected {
+  border-color: #3b82f6;
+  background: #dbeafe;
+}
+
+.candidate-item input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.cand-subarray {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+  min-width: 100px;
+}
+
+.cand-host {
+  font-size: 12px;
+  font-weight: 400;
+  color: #94a3b8;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+.cand-existing {
+  font-size: 11px;
+  color: #1e40af;
+  padding: 2px 8px;
+  background: #bfdbfe;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.cand-self {
+  font-size: 11px;
+  color: #047857;
+  padding: 2px 8px;
+  background: #a7f3d0;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.cand-master {
+  font-size: 11px;
+  color: #92400e;
+  padding: 2px 8px;
+  background: #fde68a;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.cand-role {
+  font-size: 11px;
+  color: #64748b;
+  padding: 2px 8px;
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.cand-addr {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-left: auto;
+}
+
+.conn-subarray-bold {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.conn-host-light {
+  font-size: 11px;
+  font-weight: 400;
+  color: #94a3b8;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+
+/* 确认按钮 */
+.btn-confirm {
+  padding: 4px 12px;
+  border: 1px solid #10b981;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #10b981;
+  transition: all 0.2s;
+}
+
+.btn-confirm:hover:not(:disabled) {
+  background: #10b981;
+  color: #fff;
+}
+
+.btn-confirm:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 已保存连接 */
+.saved-connections {
+  margin-top: 10px;
+}
+
+/* 连接网格 */
+.connections-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.system-connections-grid {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.connection-card {
+  background: #f8fafc;
+  border: 2px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  transition: all 0.2s;
+}
+
+.connection-card.enabled {
+  background: #ecfdf5;
+  border-color: #10b981;
+}
+
+.connection-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.system-connection-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  min-height: 80px;
+}
+
+.system-connection-card.enabled {
+  background: #ecfdf5;
+  border-color: #10b981;
+}
+
+.system-connection-card.self {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.system-connection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.system-connection-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.tag-self {
+  font-size: 11px;
+  color: #047857;
+  padding: 3px 8px;
+  background: #a7f3d0;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.tag-remote {
+  font-size: 11px;
+  color: #1e40af;
+  padding: 3px 8px;
+  background: #bfdbfe;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.tag-master {
+  font-size: 11px;
+  color: #92400e;
+  padding: 3px 8px;
+  background: #fde68a;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.tag-slave {
+  font-size: 11px;
+  color: #64748b;
+  padding: 3px 8px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.subarray-connections-grid {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.subarray-connection-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  min-height: 80px;
+}
+
+.subarray-connection-card.enabled {
+  background: #ecfdf5;
+  border-color: #10b981;
+}
+
+.subarray-connection-card.self {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.subarray-connection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.subarray-connection-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.cand-master-tag {
+  font-size: 11px;
+  color: #92400e;
+  padding: 2px 8px;
+  background: #fde68a;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.cand-slave-tag {
+  font-size: 11px;
+  color: #64748b;
+  padding: 2px 8px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.cand-remote {
+  font-size: 11px;
+  color: #1e40af;
+  padding: 2px 8px;
+  background: #bfdbfe;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.conn-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+  font-family: 'SF Mono', Monaco, monospace;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conn-subarray {
+  font-size: 11px;
+  color: #64748b;
+  padding: 2px 6px;
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
 /* Switch开关 */
 .switch {
   position: relative;
   display: inline-block;
   width: 36px;
   height: 20px;
+  flex-shrink: 0;
 }
 
 .switch input {
@@ -1314,6 +1421,14 @@ input:checked + .slider {
 
 input:checked + .slider:before {
   transform: translateX(16px);
+}
+
+/* 空状态 */
+.empty-state {
+  text-align: center;
+  padding: 20px;
+  color: #94a3b8;
+  font-size: 13px;
 }
 
 /* 保存消息 */
@@ -1402,8 +1517,15 @@ input:checked + .slider:before {
     grid-template-columns: 1fr;
   }
 
-  .connections-grid {
+  .connections-grid,
+  .system-connections-grid,
+  .subarray-connections-grid {
     grid-template-columns: 1fr;
+  }
+
+  .scan-bar {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

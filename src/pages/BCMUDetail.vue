@@ -109,9 +109,11 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useGlobalWebSocket } from '../composables/useGlobalWebSocket.js'
 
 const route = useRoute()
 const router = useRouter()
+const { sendMessage, onMessage } = useGlobalWebSocket()
 
 const currentId = computed(() => route.params.id || '0')
 const slaveId = computed(() => parseInt(currentId.value))
@@ -243,53 +245,44 @@ function calculatePower(voltage, current) {
   return ((voltage * current) / 1000).toFixed(2)
 }
 
-function queryBCMUData(slaveId) {
+function queryBCMUData() {
   return new Promise((resolve, reject) => {
-    const savedSettings = localStorage.getItem('ems_ws_settings')
-    let wsUrl = 'ws://192.168.7.37:9713'
+    const clusterId = route.query.clusterId
+    const deviceName = route.query.name
     
-    if (savedSettings) {
-      try {
-        const settings = JSON.parse(savedSettings)
-        wsUrl = `ws://${settings.ip}:${settings.port}`
-      } catch (e) {}
+    if (!clusterId || !deviceName) {
+      reject(new Error('缺少子阵ID或设备名称'))
+      return
     }
     
-    try {
-      const ws = new WebSocket(wsUrl)
-      
-      ws.onopen = () => {
-        const request = {
-          topic: '/api/ems/bcmu_data/get',
-          data: { slave_id: slaveId },
-          data_type: 'binary',
-          message_id: 'bcmu_' + slaveId,
-          timestamp: new Date().toISOString()
+    const request = {
+      topic: '/api/ems/bcmu_data/get',
+      data: { device: `${clusterId}/${deviceName}` },
+      data_type: 'binary',
+      message_id: 'bcmu_' + slaveId.value,
+      timestamp: new Date().toISOString()
+    }
+    
+    const unsubscribe = onMessage((response) => {
+      if (response.topic === '/api/ems/bcmu_data/get/response' || 
+          response.topic?.includes('bcmu_data')) {
+        unsubscribe()
+        
+        const bcmuData = response.data?.bcmu_data || response.data?.bcmu
+        if (response.data?.ret === true && bcmuData) {
+          resolve(bcmuData)
+        } else {
+          reject(new Error(response.data?.error || '获取失败'))
         }
-        ws.send(JSON.stringify(request))
       }
-      
-      ws.onmessage = (event) => {
-        const parseData = async () => {
-          const text = event.data instanceof Blob ? await event.data.text() : event.data
-          try {
-            const response = JSON.parse(text)
-            if (response.topic?.includes('bcmu_data')) {
-              if (response.data?.ret === true && response.data?.bcmu) {
-                resolve(response.data.bcmu)
-              } else {
-                reject(new Error(response.data?.error || '获取失败'))
-              }
-              ws.close()
-            }
-          } catch (e) {}
-        }
-        parseData()
-      }
-      
-      ws.onerror = () => reject(new Error('连接失败'))
-      setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.close(); reject(new Error('超时')) }, 5000)
-    } catch (error) { reject(error) }
+    })
+    
+    sendMessage(request)
+    
+    setTimeout(() => {
+      unsubscribe()
+      reject(new Error('超时'))
+    }, 5000)
   })
 }
 
@@ -301,7 +294,7 @@ async function loadData() {
   
   if (!bcmuData.value) {
     try {
-      const data = await queryBCMUData(slaveId.value)
+      const data = await queryBCMUData()
       bcmuData.value = data
       sessionStorage.setItem(`bcmu_data_${currentId.value}`, JSON.stringify(data))
     } catch (error) {

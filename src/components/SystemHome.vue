@@ -174,8 +174,6 @@ const clusterCards = computed(() => {
 
   if (isSystemMaster.value) {
     const localSubarrayId = systemData.value.cluster?.cluster_id || 'subarray1'
-    const localMaster = systemData.value.cluster?.system_master || {}
-    const subarrayMaster = systemData.value.cluster?.subarray_master || {}
 
     cards.push({
       id: localSubarrayId,
@@ -183,13 +181,13 @@ const clusterCards = computed(() => {
       statusInfo: statusMap['running'],
       power: '--',
       soc: '--',
-      slaves: `${subarrayMaster.enabled_slave_count || 0}/${subarrayMaster.slave_count || 0}`,
+      slaves: `${systemData.value.cluster?.enabled_slave_count || 0}/${systemData.value.cluster?.slave_count || 0}`,
       warnings: 0,
       isLocal: true,
       masterInfo: {
-        name: localMaster.name || systemData.value.masterName || '--',
-        ip: localMaster.ip || systemData.value.masterIp || '--',
-        sn: localMaster.sn || systemData.value.masterSn || '--'
+        name: systemData.value.masterName || '--',
+        ip: systemData.value.masterIp || '--',
+        sn: systemData.value.masterSn || '--'
       }
     })
 

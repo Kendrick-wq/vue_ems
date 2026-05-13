@@ -130,6 +130,7 @@
           <TopologyDiagram 
             :devices="allDevices" 
             :config="systemConfig"
+            :topology-nodes="topologyNodes"
             :key="systemConfig.slaves.length"
             @device-click="goToDetail"
           />
@@ -176,6 +177,9 @@ function goBack() {
 
 // ============ 响应式数据 ============
 const currentTab = ref('card')
+
+// 子阵拓扑数据（从 /api/ems/topology/get 响应获取）
+const topologyNodes = ref(null)
 
 // 本地系统状态
 const systemStatusText = computed(() => systemData.value.running ? '系统正常运行' : '系统停止')
@@ -296,6 +300,19 @@ const onlineSlavesList = computed(() => {
 // 切换标签
 function switchTab(tab) {
   currentTab.value = tab
+  
+  // 切换到拓扑视图时，请求拓扑数据
+  if (tab === 'topology') {
+    const request = {
+      topic: '/api/ems/topology/get',
+      data: { subarray_id: props.clusterId },
+      data_type: 'binary',
+      message_id: 'topology_' + Date.now(),
+      timestamp: new Date().toISOString()
+    }
+    sendMessage(request)
+    console.log('[Topology] 请求拓扑数据:', request)
+  }
 }
 
 // 格式化数字
@@ -439,7 +456,9 @@ async function parseMessage(data) {
 }
 
 // 查询从机拓扑信息
-function querySlaveTopology(slaveId) {
+// subarrayId: 子阵ID
+// slaveName: 从机名称，用于构造 device 字段
+function querySlaveTopology(subarrayId, slaveName) {
   return new Promise((resolve, reject) => {
     if (wsStatus.value !== 'connected') {
       reject(new Error('WebSocket未连接'))
@@ -447,10 +466,10 @@ function querySlaveTopology(slaveId) {
     }
     
     const request = {
-      topic: 'GetEmsHomeCmd',
-      data: { slave_id: slaveId },
+      topic: '/api/ems/ems_home/get',
+      data: { device: `${subarrayId}/${slaveName}` },
       data_type: 'binary',
-      message_id: 'topology_' + slaveId,
+      message_id: 'topology_' + slaveName,
       timestamp: new Date().toISOString()
     }
     
@@ -464,14 +483,15 @@ function querySlaveTopology(slaveId) {
     
     // 注册临时消息处理器
     const unsubscribe = onMessage(async (response) => {
-      if (response.topic === 'GetEmsHomeCmd/response' || 
-          response.topic?.includes('GetEmsHomeCmd')) {
+      if (response.topic === '/api/ems/ems_home/get/response' || 
+          response.topic?.includes('ems_home/get')) {
         clearTimeout(timeout)
         unsubscribe()
         
-        if (response.data && response.data.connection && response.data.devices) {
-          console.log('[Topology] 获取到从机拓扑:', response.data)
-          resolve(response.data)
+        const emsHome = response.data?.ems_home
+        if (emsHome && emsHome.connection && emsHome.devices) {
+          console.log('[Topology] 获取到从机拓扑:', emsHome)
+          resolve(emsHome)
         } else {
           reject(new Error(response.data?.error || '获取拓扑数据失败'))
         }
@@ -483,7 +503,10 @@ function querySlaveTopology(slaveId) {
 }
 
 // 查询 BCMU 数据并跳转到详情页
-function queryBCMUDataAndNavigate(deviceId) {
+// deviceId: 设备ID
+// subarrayId: 子阵ID
+// deviceName: 设备所属主机/从机名称，用于构造 device 字段
+function queryBCMUDataAndNavigate(deviceId, subarrayId, deviceName) {
   if (wsStatus.value !== 'connected') {
     alert('WebSocket 未连接')
     return
@@ -498,7 +521,7 @@ function queryBCMUDataAndNavigate(deviceId) {
   
   const request = {
     topic: '/api/ems/bcmu_data/get',
-    data: { slave_id: parseInt(deviceId) },
+    data: subarrayId && deviceName ? { device: `${subarrayId}/${deviceName}` } : {},
     data_type: 'binary',
     message_id: 'bcmu_' + deviceId,
     timestamp: new Date().toISOString()
@@ -518,9 +541,10 @@ function queryBCMUDataAndNavigate(deviceId) {
       unsubscribe()
       document.body.removeChild(loadingDiv)
       
-      if (response.data?.ret === true && response.data?.bcmu) {
-        sessionStorage.setItem(`bcmu_data_${deviceId}`, JSON.stringify(response.data.bcmu))
-        router.push({ name: 'BCMUDetail', params: { id: String(deviceId) } })
+      const bcmuData = response.data?.bcmu_data || response.data?.bcmu
+      if (response.data?.ret === true && bcmuData) {
+        sessionStorage.setItem(`bcmu_data_${deviceId}`, JSON.stringify(bcmuData))
+        router.push({ name: 'BCMUDetail', params: { id: String(deviceId) }, query: { clusterId: subarrayId, name: deviceName } })
       } else {
         alert('获取 BCMU 数据失败: ' + (response.data?.error || '未知错误'))
       }
@@ -531,7 +555,10 @@ function queryBCMUDataAndNavigate(deviceId) {
 }
 
 // 查询 PCS 数据并跳转到详情页
-function queryPCSDataAndNavigate(deviceId) {
+// deviceId: 设备ID
+// subarrayId: 子阵ID
+// deviceName: 设备所属主机/从机名称，用于构造 device 字段
+function queryPCSDataAndNavigate(deviceId, subarrayId, deviceName) {
   if (wsStatus.value !== 'connected') {
     alert('WebSocket 未连接')
     return
@@ -546,7 +573,7 @@ function queryPCSDataAndNavigate(deviceId) {
   
   const request = {
     topic: '/api/ems/pcs_data/get',
-    data: { slave_id: parseInt(deviceId) },
+    data: subarrayId && deviceName ? { device: `${subarrayId}/${deviceName}` } : {},
     data_type: 'binary',
     message_id: 'pcs_' + deviceId,
     timestamp: new Date().toISOString()
@@ -566,9 +593,10 @@ function queryPCSDataAndNavigate(deviceId) {
       unsubscribe()
       document.body.removeChild(loadingDiv)
       
-      if (response.data?.ret === true && response.data?.pcs) {
-        sessionStorage.setItem(`pcs_data_${deviceId}`, JSON.stringify(response.data.pcs))
-        router.push({ name: 'PCSDetail', params: { id: String(deviceId) } })
+      const pcsData = response.data?.pcs_data || response.data?.pcs
+      if (response.data?.ret === true && pcsData) {
+        sessionStorage.setItem(`pcs_data_${deviceId}`, JSON.stringify(pcsData))
+        router.push({ name: 'PCSDetail', params: { id: String(deviceId) }, query: { clusterId: subarrayId, name: deviceName } })
       } else {
         alert('获取 PCS 数据失败: ' + (response.data?.error || '未知错误'))
       }
@@ -579,7 +607,10 @@ function queryPCSDataAndNavigate(deviceId) {
 }
 
 // 查询电表数据并跳转到详情页
-function queryMeterDataAndNavigate(deviceId) {
+// deviceId: 设备ID
+// subarrayId: 子阵ID
+// deviceName: 设备所属主机/从机名称，用于构造 device 字段
+function queryMeterDataAndNavigate(deviceId, subarrayId, deviceName) {
   if (wsStatus.value !== 'connected') {
     alert('WebSocket 未连接')
     return
@@ -594,7 +625,7 @@ function queryMeterDataAndNavigate(deviceId) {
   
   const request = {
     topic: '/api/ems/electric_meter_data/get',
-    data: { slave_id: parseInt(deviceId) },
+    data: subarrayId && deviceName ? { device: `${subarrayId}/${deviceName}` } : {},
     data_type: 'binary',
     message_id: 'meter_' + deviceId,
     timestamp: new Date().toISOString()
@@ -614,9 +645,10 @@ function queryMeterDataAndNavigate(deviceId) {
       unsubscribe()
       document.body.removeChild(loadingDiv)
       
-      if (response.data?.ret === true && response.data?.electric_meter) {
-        sessionStorage.setItem(`meter_data_${deviceId}`, JSON.stringify(response.data.electric_meter))
-        router.push({ name: 'ElectricMeterDetail', params: { id: String(deviceId) } })
+      const meterData = response.data?.electric_meter_data || response.data?.electric_meter
+      if (response.data?.ret === true && meterData) {
+        sessionStorage.setItem(`meter_data_${deviceId}`, JSON.stringify(meterData))
+        router.push({ name: 'ElectricMeterDetail', params: { id: String(deviceId) }, query: { clusterId: subarrayId, name: deviceName } })
       } else {
         alert('获取电表数据失败: ' + (response.data?.error || '未知错误'))
       }
@@ -715,13 +747,16 @@ async function goToDetail(clickData) {
       isMaster: String(isMaster || false)
     })
     
+    // 从设备数据中获取所属主机/从机名称
+    const deviceName = device?.device_name || (isMaster ? '主机' : `从机#${deviceId}`)
+    
     // 根据类型查询数据并跳转
     if (type.toLowerCase() === 'bcmu') {
-      queryBCMUDataAndNavigate(deviceId || '0')
+      queryBCMUDataAndNavigate(deviceId || '0', props.clusterId, deviceName)
     } else if (type.toLowerCase() === 'pcs') {
-      queryPCSDataAndNavigate(deviceId || '0')
+      queryPCSDataAndNavigate(deviceId || '0', props.clusterId, deviceName)
     } else if (type.toLowerCase() === 'meter') {
-      queryMeterDataAndNavigate(deviceId || '0')
+      queryMeterDataAndNavigate(deviceId || '0', props.clusterId, deviceName)
     }
     return
   }
@@ -741,7 +776,7 @@ async function goToDetail(clickData) {
   
   try {
     // 查询从机拓扑信息（包含设备配置和拓扑）
-    const topologyData = await querySlaveTopology(slaveId)
+    const topologyData = await querySlaveTopology(props.clusterId, slaveName)
     
     // 移除加载提示
     document.body.removeChild(loadingDiv)
@@ -778,7 +813,8 @@ async function goToDetail(clickData) {
         query: {
           name: slaveName,
           ip: device.ip_address || '',
-          sn: device.sn || ''
+          sn: device.sn || '',
+          clusterId: props.clusterId
         }
       })
     }
@@ -815,6 +851,15 @@ onMounted(() => {
         processHomePageData(response.data)
       }
     }
+    
+    // 处理拓扑数据响应
+    if (response.topic === '/api/ems/topology/get/response' ||
+        response.topic?.includes('topology/get')) {
+      if (response.data?.ret === true && response.data?.nodes) {
+        topologyNodes.value = response.data.nodes
+        console.log('[Topology] 获取到子阵拓扑:', topologyNodes.value)
+      }
+    }
   })
 })
 
@@ -830,28 +875,30 @@ onUnmounted(() => {
 
 // 处理首页数据
 function processHomePageData(data) {
-  // 更新设备数据（新的格式：device_info 数组）
-  if (data.device_info && Array.isArray(data.device_info)) {
-    data.device_info.forEach(device => {
-      const slaveId = device.slave_id
-      
-      if (slaveId === 0) {
-        // 主机数据 (slave_id = 0)
+  // 更新设备数据（后端字段：subarray_info 数组）
+  if (data.subarray_info && Array.isArray(data.subarray_info)) {
+    data.subarray_info.forEach(device => {
+      // 适配后端格式：通过 name/slave_name 判断主机/从机
+      if (device.name || !device.slave_name) {
+        // 主机数据（有 name 字段，或无 slave_name）
         devicesData.value.master = {
           ...devicesData.value.master,
           pcs: device.pcs || {},
           bms: device.bcmu || {},
-          device_name: systemConfig.value.masterName || '主机',
+          device_name: systemConfig.value.masterName || device.name || '主机',
           status: 'online',
           slave_id: 0
         }
-      } else {
-        // 从机数据
+      } else if (device.slave_name) {
+        // 从机数据：通过 slave_name 查找对应的 slave_id
+        const slaveConfig = systemConfig.value.slaves.find(s => s.name === device.slave_name)
+        const slaveId = slaveConfig ? slaveConfig.id : device.slave_name
+        
         const statusInfo = systemConfig.value.slaveStatusMap[slaveId] || {}
         devicesData.value.slaves[slaveId] = {
           ...devicesData.value.slaves[slaveId],
           slave_id: slaveId,
-          device_name: systemConfig.value.slaves.find(s => s.id === slaveId)?.name || `从机#${slaveId}`,
+          device_name: slaveConfig ? slaveConfig.name : device.slave_name,
           pcs: device.pcs || {},
           bms: device.bcmu || {},
           status: statusInfo.online ? 'online' : 'offline'

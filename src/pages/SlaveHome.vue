@@ -148,7 +148,15 @@ const route = useRoute()
 const router = useRouter()
 
 // 使用全局WebSocket
-const { systemData, startSlaveHomeTimer, stopSlaveHomeTimer } = useGlobalWebSocket()
+const { 
+  systemData, 
+  startSlaveHomeTimer, 
+  stopSlaveHomeTimer,
+  startSystemInfoTimer,
+  stopSystemInfoTimer,
+  sendMessage,
+  onMessage
+} = useGlobalWebSocket()
 
 const slaveId = computed(() => route.params.id || '0')
 const slaveName = computed(() => route.query.name || `从机#${slaveId.value}`)
@@ -378,32 +386,73 @@ onMounted(() => {
     }
   }
   
-  // 启动从机首页定时查询
-  startSlaveHomeTimer(slaveId.value)
+  // 启动从机首页定时查询（带上子阵ID和从机名）
+  startSlaveHomeTimer(slaveId.value, clusterId.value, slaveName.value)
+  
+  // 停止全局 systemInfo 定时器，启动带参数的（指定子阵和从机名）
+  stopSystemInfoTimer()
+  startSystemInfoTimer(clusterId.value, slaveName.value)
 })
 
 onUnmounted(() => {
   // 停止从机首页定时查询
   stopSlaveHomeTimer()
+  
+  // 停止从机 systemInfo 定时器，恢复全局的
+  stopSystemInfoTimer()
+  startSystemInfoTimer()
 })
 
 function goToDeviceDetail(device) {
+  const queryParams = { clusterId: clusterId.value, name: slaveName.value }
+  
   if (device.type === 'bms' || device.type === 'bcmu') {
+    queryDeviceData('/api/ems/bcmu_data/get', 'bcmu', `bcmu_data_${slaveId.value}`)
     router.push({
       name: 'BCMUDetail',
-      params: { id: String(slaveId.value) }
+      params: { id: String(slaveId.value) },
+      query: queryParams
     })
   } else if (device.type === 'pcs') {
+    queryDeviceData('/api/ems/pcs_data/get', 'pcs', `pcs_data_${slaveId.value}`)
     router.push({
       name: 'PCSDetail',
-      params: { id: String(slaveId.value) }
+      params: { id: String(slaveId.value) },
+      query: queryParams
     })
   } else if (device.type === 'meter') {
+    queryDeviceData('/api/ems/electric_meter_data/get', 'electric_meter', `meter_data_${slaveId.value}`)
     router.push({
       name: 'ElectricMeterDetail',
-      params: { id: String(slaveId.value) }
+      params: { id: String(slaveId.value) },
+      query: queryParams
     })
   }
+}
+
+// 发送设备数据查询请求
+function queryDeviceData(topic, dataKey, storageKey) {
+  if (!sendMessage) return
+  
+  const request = {
+    topic: topic,
+    data: { device: `${clusterId.value}/${slaveName.value}` },
+    data_type: 'binary',
+    message_id: dataKey + '_' + slaveId.value,
+    timestamp: new Date().toISOString()
+  }
+  
+  const unsubscribe = onMessage((response) => {
+    if (response.topic === `${topic}/response` || response.topic?.includes(dataKey)) {
+      unsubscribe()
+      const respData = response.data?.[`${dataKey}_data`] || response.data?.[dataKey]
+      if (response.data?.ret === true && respData) {
+        sessionStorage.setItem(storageKey, JSON.stringify(respData))
+      }
+    }
+  })
+  
+  sendMessage(request)
 }
 
 function goBack() {

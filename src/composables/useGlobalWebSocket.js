@@ -74,7 +74,7 @@ let reconnectTimer = null
 let systemInfoTimer = null      // GetSytemInfoCmd 定时器 - 全局
 let masterHomeTimer = null      // /api/ems/master_home/get 定时器 - 首页
 let deviceStatusTimer = null    // rpc/{system_id}/deviceinfo 定时器 - 首页
-let slaveHomeTimer = null       // GetEmsHomeCmd 定时器 - 从机首页
+let slaveHomeTimer = null       // /api/ems/ems_home/get 定时器 - 从机首页
 
 let messageHandlers = []
 
@@ -143,8 +143,8 @@ function connectWebSocket() {
         }
         
         // 处理从机首页数据响应
-        if (response.topic === 'GetEmsHomeCmd/response' || 
-            response.topic?.includes('GetEmsHomeCmd')) {
+        if (response.topic === '/api/ems/ems_home/get/response' || 
+            response.topic?.includes('ems_home/get')) {
           if (response.data?.ret === true) {
             // 通知处理器
           }
@@ -230,15 +230,17 @@ function sendMessage(message) {
 // ============ 定时查询控制 ============
 
 // 启动 GetSytemInfoCmd 定时查询 (全局，所有页面都需要)
-function startSystemInfoTimer() {
+// subarrayId: 子阵ID，传入时查询指定子阵
+// name: 设备名称，传入时带上设备名
+function startSystemInfoTimer(subarrayId = null, name = null) {
   if (systemInfoTimer) return
   
   // 立即查询一次
-  setTimeout(() => fetchSystemInfo(), 200)
+  setTimeout(() => fetchSystemInfo(subarrayId, name), 200)
   
   // 每4秒查询一次
   systemInfoTimer = setInterval(() => {
-    fetchSystemInfo()
+    fetchSystemInfo(subarrayId, name)
   }, 4000)
 }
 
@@ -258,13 +260,13 @@ function startMasterHomeTimer(subarrayId = null) {
   // 立即查询一次
   setTimeout(() => {
     fetchDeviceStatus(subarrayId)
-    setTimeout(() => fetchHomePageData(), 100)
+    setTimeout(() => fetchHomePageData(subarrayId), 100)
   }, 300)
   
   // 每5秒查询一次
   deviceStatusTimer = setInterval(() => {
     fetchDeviceStatus(subarrayId)
-    setTimeout(() => fetchHomePageData(), 100)
+    setTimeout(() => fetchHomePageData(subarrayId), 100)
   }, 5000)
 }
 
@@ -281,15 +283,18 @@ function stopMasterHomeTimer() {
 }
 
 // 启动从机首页定时查询 (ems_home)
-function startSlaveHomeTimer(slaveId) {
+// slaveId: 从机ID
+// subarrayId: 子阵ID，传入时带上子阵标识
+// name: 设备名称，传入时带上设备名
+function startSlaveHomeTimer(slaveId, subarrayId = null, name = null) {
   if (slaveHomeTimer) return
   
   // 立即查询一次
-  setTimeout(() => fetchSlaveHomeData(slaveId), 300)
+  setTimeout(() => fetchSlaveHomeData(slaveId, subarrayId, name), 300)
   
   // 每5秒查询一次
   slaveHomeTimer = setInterval(() => {
-    fetchSlaveHomeData(slaveId)
+    fetchSlaveHomeData(slaveId, subarrayId, name)
   }, 5000)
 }
 
@@ -328,12 +333,13 @@ function fetchDeviceStatus(subarrayId = null) {
 }
 
 // 获取首页数据
-function fetchHomePageData() {
+// subarrayId: 子阵ID，传入时查询指定子阵，不传时查询当前设备
+function fetchHomePageData(subarrayId = null) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return
   
   const request = {
     topic: '/api/ems/master_home/get',
-    data: {},
+    data: subarrayId ? { subarray_id: subarrayId } : {},
     data_type: 'binary',
     message_id: 'home_' + Date.now(),
     timestamp: new Date().toISOString()
@@ -343,12 +349,20 @@ function fetchHomePageData() {
 }
 
 // 获取从机首页数据
-function fetchSlaveHomeData(slaveId) {
+// slaveId: 从机ID（保留参数，不再直接下发）
+// subarrayId: 子阵ID，传入时带上子阵标识
+// name: 设备名称，用于解析 slave_id（如 slave2_1 → 1）
+function fetchSlaveHomeData(slaveId, subarrayId = null, name = null) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return
   
+  const data = {}
+  if (subarrayId && name) {
+    data.device = `${subarrayId}/${name}`
+  }
+  
   const request = {
-    topic: 'GetEmsHomeCmd',
-    data: { slave_id: slaveId },
+    topic: '/api/ems/ems_home/get',
+    data: data,
     data_type: 'binary',
     message_id: 'slave_home_' + Date.now(),
     timestamp: new Date().toISOString()
@@ -358,12 +372,18 @@ function fetchSlaveHomeData(slaveId) {
 }
 
 // 获取系统信息 (GetSytemInfoCmd)
-function fetchSystemInfo() {
+// subarrayId: 子阵ID，传入时查询指定子阵
+// name: 设备名称，传入时带上设备名
+function fetchSystemInfo(subarrayId = null, name = null) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return
+  
+  const data = {}
+  if (subarrayId) data.subarray_id = subarrayId
+  if (name) data.name = name
   
   const request = {
     topic: 'GetSytemInfoCmd',
-    data: {},
+    data: data,
     type: ''
   }
   
@@ -432,36 +452,36 @@ function updateSystemData(data) {
       system_id: devices.system.id,
       is_system_master: devices.system.is_master,
       is_subarray_master: devices.subarray?.is_master || false,
-      // 保存系统主机信息
-      system_master: devices.system.master || {},
-      // 保存子阵主机信息
-      subarray_master: devices.subarray?.master || {}
+      enabled_slave_count: devices.subarray?.enabled_slave_count || 0,
+      slave_count: devices.subarray?.slave_count || 0
     }
     systemData.value.clusterName = devices.subarray?.id || ''
   }
 
   // 子阵信息
   if (devices.subarray) {
-    // 主机信息
-    if (devices.subarray.master) {
-      systemData.value.masterName = devices.subarray.master.name
-      systemData.value.masterIp = devices.subarray.master.ip || ''
-      systemData.value.masterSn = devices.subarray.master.sn || ''
-    }
-
-    // 从机列表（从 subarray.connections 解析）
+    // 从 connections 中找主机信息
     if (devices.subarray.connections && Array.isArray(devices.subarray.connections)) {
+      const masterConn = devices.subarray.connections.find(c => c.role === 'master')
+      if (masterConn) {
+        systemData.value.masterName = masterConn.name
+        systemData.value.masterIp = masterConn.ip || ''
+        systemData.value.masterSn = masterConn.sn || ''
+      }
+
       const slaves = []
       const statusMap = {}
       let online = 0
       let offline = 0
 
       devices.subarray.connections.forEach(conn => {
-        if (conn.enabled) {
+        const isMaster = conn.role === 'master'
+        if (conn.enabled && !isMaster) {
           slaves.push({
-            id: conn.id,
-            name: conn.name || `从机#${conn.id}`,
-            enabled: conn.enabled
+            id: conn.name,
+            name: conn.name || '从机',
+            enabled: conn.enabled,
+            role: conn.role || 'slave'
           })
 
           if (conn.online) {
@@ -471,15 +491,16 @@ function updateSystemData(data) {
           }
         }
 
-        statusMap[conn.id] = {
+        statusMap[conn.name] = {
           online: conn.online,
           ip: conn.ip || '',
           sn: conn.sn || '',
-          status: conn.online ? 'Connected' : 'Disconnected'
+          status: conn.online ? 'Connected' : 'Disconnected',
+          role: conn.role || (isMaster ? 'master' : 'slave')
         }
       })
 
-      slaves.sort((a, b) => a.id - b.id)
+      slaves.sort((a, b) => a.name.localeCompare(b.name))
       systemData.value.slaves = slaves
       systemData.value.slaveStatusMap = statusMap
       systemData.value.onlineCount = online
@@ -557,10 +578,13 @@ export function useGlobalWebSocket() {
     fetchDeviceStatus,
     fetchHomePageData,
     fetchSlaveHomeData,
+    fetchSystemInfo,
     
     // 定时控制
     startMasterHomeTimer,
     stopMasterHomeTimer,
+    startSystemInfoTimer,
+    stopSystemInfoTimer,
     startSlaveHomeTimer,
     stopSlaveHomeTimer
   }

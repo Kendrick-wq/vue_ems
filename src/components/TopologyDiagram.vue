@@ -1,7 +1,7 @@
 <template>
   <div class="topology-diagram">
     <div class="topology-svg-container">
-      <svg class="topology-svg" viewBox="0 0 900 480">
+      <svg class="topology-svg" :viewBox="hasTopologyNodes ? dynamicViewBox : '0 0 900 480'">
         <!-- 定义 -->
         <defs>
           <!-- 母线渐变 -->
@@ -16,6 +16,9 @@
           <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#f8fafc" stroke-width="1"/>
         </pattern>
         <rect width="100%" height="100%" fill="url(#grid)" />
+        
+        <!-- 硬编码拓扑（回退） -->
+        <template v-if="!hasTopologyNodes">
         
         <!-- AC母线 -->
         <g class="bus-section">
@@ -227,6 +230,48 @@
           <line x1="110" y1="8" x2="145" y2="8" stroke="#3b82f6" stroke-width="2" />
           <text x="150" y="12" font-size="10" fill="#64748b">直流线 DC</text>
         </g>
+        </template>
+        
+        <!-- 动态拓扑（基于 topologyNodes，junction 布局） -->
+        <template v-if="hasTopologyNodes">
+          <g v-for="(node, nodeName, index) in topologyNodes" :key="nodeName" :transform="`translate(${index * 460}, 0)`">
+            <!-- 节点标题背景 -->
+            <rect x="10" y="8" width="440" height="28" rx="6" fill="#f1f5f9" />
+            <text x="230" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#334155">{{ nodeName }}</text>
+            
+            <!-- 连接线（来自 connection） -->
+            <line v-for="(conn, cidx) in node.ems_home?.connection" :key="'conn-'+cidx"
+              :x1="getConnPos(node, conn).from.x" :y1="getConnPos(node, conn).from.y"
+              :x2="getConnPos(node, conn).to.x" :y2="getConnPos(node, conn).to.y"
+              :stroke="conn.is_active ? '#67c23a' : '#c0c4cc'" stroke-width="2" stroke-linecap="round" />
+            
+            <!-- 设备节点 -->
+            <g v-for="device in getNodeDeviceList(node)" :key="device.name" @click="$emit('device-click', { type: device.type, device: device.raw, deviceId: device.id, isMaster: device.isMaster, nodeName })" class="device-group">
+              <!-- 非电池非 junction 设备使用图片 -->
+              <image v-if="device.type !== 'bms' && device.type !== 'bcmu' && device.type !== 'junction'"
+                :x="device.pos.x - 22" :y="device.pos.y - 22"
+                width="44" height="44" :href="getDeviceIcon(device.type)" />
+              
+              <!-- BCMU 电池图形 -->
+              <g v-else-if="device.type === 'bms' || device.type === 'bcmu'">
+                <rect :x="device.pos.x - 18" :y="device.pos.y - 26" width="36" height="52" rx="4" fill="#f5f5f5" stroke="#67c23a" stroke-width="2" />
+                <rect :x="device.pos.x - 6" :y="device.pos.y - 32" width="12" height="6" rx="2" fill="#67c23a" />
+                <text :x="device.pos.x" :y="device.pos.y + 4" text-anchor="middle" font-size="11" font-weight="bold" fill="#333">SOC</text>
+              </g>
+              
+              <!-- junction 小圆点 -->
+              <circle v-else :cx="device.pos.x" :cy="device.pos.y" r="6" fill="#1890ff" stroke="#fff" stroke-width="2" />
+              
+              <!-- 设备名称 -->
+              <text :x="device.pos.x" :y="device.pos.y + 38" text-anchor="middle" font-size="10" fill="#333" font-weight="500">{{ device.name }}</text>
+              
+              <!-- 状态指示点 -->
+              <circle :cx="device.pos.x + 18" :cy="device.pos.y - 18" r="4"
+                :fill="device.isOnline ? '#10b981' : '#ef4444'" stroke="#fff" stroke-width="1.5" />
+            </g>
+          </g>
+        </template>
+        
       </svg>
     </div>
   </div>
@@ -248,10 +293,154 @@ const props = defineProps({
       slaves: [],
       slaveStatusMap: {}
     })
+  },
+  topologyNodes: {
+    type: Object,
+    default: null
   }
 })
 
 defineEmits(['device-click'])
+
+// ============ 动态拓扑（基于 topologyNodes）============
+
+const hasTopologyNodes = computed(() => !!props.topologyNodes && Object.keys(props.topologyNodes).length > 0)
+
+const dynamicViewBox = computed(() => {
+  if (!hasTopologyNodes.value) return '0 0 900 480'
+  const nodeCount = Object.keys(props.topologyNodes).length
+  const width = nodeCount * 460
+  return `0 0 ${width} 400`
+})
+
+// 类型名称映射（中文）
+const TYPE_NAME_MAP = {
+  grid: '电网',
+  load: '负载',
+  sts: 'STS',
+  pcs: 'PCS',
+  bms: 'BCMU',
+  bcmu: 'BCMU',
+  junction: '节点',
+  meter: '电表'
+}
+
+// 设备类型到固定位置的映射（单设备类型）
+const DEVICE_POSITIONS = {
+  grid: { x: 60, y: 100 },
+  sts: { x: 160, y: 100 },
+  junction: { x: 260, y: 100 },
+  load: { x: 380, y: 100 }
+}
+
+function getDeviceIcon(type) {
+  const iconMap = {
+    grid: '/icon/电网.png',
+    load: '/icon/负载.png',
+    pcs: '/icon/pcs.png',
+    sts: '/icon/STS.png',
+    meter: '/icon/meter.png'
+  }
+  return iconMap[type] || '/icon/pcs.png'
+}
+
+// 将 node.ems_home.devices 转换为设备列表，并计算每个设备的位置
+// grid、load、sts 多个时只显示一个
+// pcs 横向排列在 junction 下方，bms 放在对应 pcs 的正下方
+function getNodeDeviceList(node) {
+  const devices = node.ems_home?.devices
+  const connections = node.ems_home?.connection
+  if (!devices) return []
+  
+  const list = []
+  const singleTypes = ['grid', 'load', 'sts']
+  
+  // 收集所有设备
+  const allDevices = {}
+  Object.entries(devices).forEach(([type, items]) => {
+    if (!Array.isArray(items) || items.length === 0) return
+    allDevices[type] = items
+  })
+  
+  // 计算 PCS 横向位置（在 junction 下方）
+  const pcsList = allDevices.pcs || []
+  const pcsCount = pcsList.length
+  const pcsPositions = {}
+  if (pcsCount > 0) {
+    const startX = 260 - ((pcsCount - 1) * 80) / 2
+    pcsList.forEach((pcs, idx) => {
+      pcsPositions[pcs.name] = { x: startX + idx * 80, y: 220 }
+    })
+  }
+  
+  // 计算 BCMU 位置（放在对应 PCS 的正下方）
+  const bmsPositions = {}
+  const bmsList = allDevices.bms || []
+  bmsList.forEach((bms) => {
+    const conn = connections?.find(c => c.to.type === 'bms' && c.to.name === bms.name)
+    if (conn && pcsPositions[conn.from.name]) {
+      bmsPositions[bms.name] = {
+        x: pcsPositions[conn.from.name].x,
+        y: pcsPositions[conn.from.name].y + 120
+      }
+    } else {
+      bmsPositions[bms.name] = { x: 260, y: 340 }
+    }
+  })
+  
+  // 计算 junction 位置（在 PCS 上方中间）
+  const junctionX = pcsCount > 1
+    ? (pcsPositions[pcsList[0].name].x + pcsPositions[pcsList[pcsCount - 1].name].x) / 2
+    : 260
+  
+  // 生成设备列表
+  Object.entries(allDevices).forEach(([type, items]) => {
+    if (singleTypes.includes(type)) {
+      const item = items[0]
+      list.push({
+        name: TYPE_NAME_MAP[type] || type,
+        type: type,
+        status: item.status,
+        isOnline: item.status === 'Connected' || item.status === 'Running',
+        raw: item,
+        pos: DEVICE_POSITIONS[type] || { x: 260, y: 100 }
+      })
+    } else {
+      items.forEach((item, idx) => {
+        let pos = { x: 260, y: 200 }
+        if (type === 'pcs') {
+          pos = pcsPositions[item.name] || { x: 260, y: 220 }
+        } else if (type === 'bms') {
+          pos = bmsPositions[item.name] || { x: 260, y: 340 }
+        } else if (type === 'junction') {
+          pos = { x: junctionX, y: 100 }
+        }
+        
+        list.push({
+          name: `${TYPE_NAME_MAP[type] || type}${idx + 1}`,
+          type: type,
+          status: item.status,
+          isOnline: item.status === 'Connected' || item.status === 'Running',
+          raw: item,
+          pos: pos
+        })
+      })
+    }
+  })
+  
+  return list
+}
+
+// 获取连接线的位置（根据设备名称匹配）
+function getConnPos(node, conn) {
+  const devices = getNodeDeviceList(node)
+  const fromDevice = devices.find(d => d.raw?.name === conn.from.name)
+  const toDevice = devices.find(d => d.raw?.name === conn.to.name)
+  return {
+    from: fromDevice?.pos || DEVICE_POSITIONS[conn.from.type] || { x: 230, y: 200 },
+    to: toDevice?.pos || DEVICE_POSITIONS[conn.to.type] || { x: 230, y: 200 }
+  }
+}
 
 // 拓扑图设备数据（包含主机和所有从机）
 const topologyDevices = computed(() => {
