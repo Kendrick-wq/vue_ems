@@ -123,6 +123,29 @@
           </g>
         </svg>
       </div>
+      
+      <!-- 能量信息面板 -->
+      <div class="energy-panel" v-if="energyData?.gEmsEnergyInfo">
+        <div class="energy-panel-title">能量统计</div>
+        <div class="energy-grid">
+          <div class="energy-item">
+            <div class="energy-label">储能总充电</div>
+            <div class="energy-value charge">{{ formatEnergy(energyData.gEmsEnergyInfo[ENERGY_INDEX.BatTotalCharge], 'MWh') }}</div>
+          </div>
+          <div class="energy-item">
+            <div class="energy-label">储能总放电</div>
+            <div class="energy-value discharge">{{ formatEnergy(energyData.gEmsEnergyInfo[ENERGY_INDEX.BatTotalDischarge], 'MWh') }}</div>
+          </div>
+          <div class="energy-item">
+            <div class="energy-label">当日充电量</div>
+            <div class="energy-value charge">{{ formatEnergy(energyData.gEmsEnergyInfo[ENERGY_INDEX.BatTodayCharge], 'kWh') }}</div>
+          </div>
+          <div class="energy-item">
+            <div class="energy-label">当日放电量</div>
+            <div class="energy-value discharge">{{ formatEnergy(energyData.gEmsEnergyInfo[ENERGY_INDEX.BatTodayDischarge], 'kWh') }}</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 无数据提示 -->
@@ -166,6 +189,25 @@ const clusterId = computed(() => route.query.clusterId || '1')
 const systemId = computed(() => systemData.value.cluster?.system_id || '--')
 
 const topologyData = ref(null)
+const energyData = ref(null)
+
+// 能量信息索引映射 (对应后端 Energy_49_Enum)
+const ENERGY_INDEX = {
+  PcsTodayCharge: 0,      // PCS当日充电量 kWh
+  PcsTodayDischarge: 1,   // PCS当日放电量 kWh
+  PcsTotalCharge: 2,      // PCS累计充电量 MWh
+  PcsTotalDischarge: 3,   // PCS累计放电量 MWh
+  BatTodayCharge: 8,      // 电池当日充电量 kWh
+  BatTodayDischarge: 9,   // 电池当日放电量 kWh
+  BatTotalCharge: 10,     // 电池累计充电量 MWh
+  BatTotalDischarge: 11   // 电池累计放电量 MWh
+}
+
+// 格式化能量数值
+function formatEnergy(value, unit) {
+  if (value === undefined || value === null || isNaN(value)) return '--'
+  return Number(value).toFixed(2) + ' ' + unit
+}
 
 // 新布局 - 根据用户要求
 // 电网在左侧，横线向右连接到负载
@@ -386,6 +428,16 @@ onMounted(() => {
     }
   }
   
+  const savedEnergy = sessionStorage.getItem(`slave_${slaveId.value}_energy`)
+  if (savedEnergy) {
+    try {
+      energyData.value = JSON.parse(savedEnergy)
+      console.log('[SlaveHome] 加载能量数据:', energyData.value)
+    } catch (e) {
+      console.error('[SlaveHome] 解析能量数据失败:', e)
+    }
+  }
+  
   // 启动从机首页定时查询（带上子阵ID和从机名）
   startSlaveHomeTimer(slaveId.value, clusterId.value, slaveName.value)
   
@@ -533,16 +585,19 @@ function goBack() {
   flex: 1;
   padding: 20px;
   overflow: hidden;
+  display: flex;
+  gap: 15px;
 }
 
-.topology-svg-container {
-  width: 100%;
+.topology-main {
+  flex: 1;
   height: 100%;
   background: #fff;
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
 }
 
 .topology-svg {
@@ -550,6 +605,59 @@ function goBack() {
   height: 100%;
   max-width: 900px;
   max-height: 600px;
+}
+
+/* 能量信息面板 */
+.energy-panel {
+  width: 220px;
+  height: 100%;
+  background: #fff;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  flex-shrink: 0;
+}
+
+.energy-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.energy-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.energy-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.energy-label {
+  font-size: 11px;
+  color: #999;
+}
+
+.energy-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-family: 'Consolas', monospace;
+}
+
+.energy-value.charge {
+  color: #52c41a;
+}
+
+.energy-value.discharge {
+  color: #1890ff;
 }
 
 .device-group {

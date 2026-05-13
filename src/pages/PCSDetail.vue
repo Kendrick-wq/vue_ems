@@ -249,8 +249,46 @@ function setPower() {
 
 // 发送控制命令
 function sendControlCommand(param, value) {
-  console.log(`[PCS Control] ${param} = ${value}`)
-  alert(`发送命令: ${param} = ${value}`)
+  const clusterId = route.query.clusterId
+  const deviceName = route.query.name
+  
+  if (!clusterId || !deviceName) {
+    alert('缺少子阵或设备信息，无法发送控制命令')
+    return
+  }
+  
+  const request = {
+    topic: '/api/ems/pcs/control/param/set',
+    data: {
+      device: `${clusterId}/${deviceName}`,
+      title: param,
+      data: value
+    },
+    data_type: 'binary',
+    message_id: 'pcs_ctrl_' + Date.now(),
+    timestamp: new Date().toISOString()
+  }
+  
+  const unsubscribe = onMessage((response) => {
+    if (response.topic === '/api/ems/pcs/control/param/set/response') {
+      unsubscribe()
+      const result = response.data?.result ?? response.data
+      if (result === true || result === 'success') {
+        console.log(`[PCS Control] 成功: ${param} = ${value}`)
+      } else {
+        const msg = response.data?.msg || response.error_msg || '未知错误'
+        console.error(`[PCS Control] 失败: ${param} = ${value}, 原因: ${msg}`)
+        alert(`控制失败: ${msg}`)
+      }
+    }
+  })
+  
+  sendMessage(request)
+  
+  // 5秒后清理监听
+  setTimeout(() => {
+    unsubscribe()
+  }, 5000)
 }
 
 // 查询 PCS 数据

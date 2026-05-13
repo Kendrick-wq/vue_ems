@@ -8,10 +8,11 @@
     >
       <!-- 头部 -->
       <div class="node-header">
-        <span class="node-title" :title="displayName">{{ displayName }}</span>
-        <div class="header-right">
-          <span class="work-status" :class="workStatusClass">{{ workStatusText }}</span>
-          <span class="node-badge">{{ badgeText }}</span>
+        <div class="header-left">
+          <div class="header-tags">
+            <span class="node-role">{{ roleText }}</span>
+            <span class="work-status" :class="workStatusClass">{{ workStatusText }}</span>
+          </div>
         </div>
       </div>
       
@@ -84,7 +85,7 @@
       <!-- 底部信息 -->
       <div class="node-footer">
         <div class="node-ip">🌐 {{ deviceData.ip_address || '--' }}</div>
-        <div class="node-sn">{{ deviceData.sn || 'SN: --' }}</div>
+        <div class="node-name-bottom">{{ displayName }}</div>
       </div>
     </div>
   </div>
@@ -153,6 +154,12 @@ const workStatusClass = computed(() => {
   if (status === 'offline') return 'offline'
   if (status === 'online') return 'online'
   return ''
+})
+
+// 角色文本
+const roleText = computed(() => {
+  if (deviceData.value.role === 'master') return '主机'
+  return '从机'
 })
 
 // 标签文本
@@ -286,7 +293,7 @@ function formatValue(value, unit) {
   background: #ffffff;
   border-bottom: 1px solid rgba(0, 0, 0, 0.04);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
 }
 
@@ -298,13 +305,44 @@ function formatValue(value, unit) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100px;
+  max-width: 100%;
 }
 
-.header-right {
+.header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.header-tags {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.node-role {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.device-node.master .node-role {
+  background: rgba(16, 185, 129, 0.1);
+  color: #059669;
+}
+
+.device-node.slave .node-role {
+  background: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+}
+
+.device-node.offline .node-role {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
 }
 
 .work-status {
@@ -320,30 +358,6 @@ function formatValue(value, unit) {
 }
 
 .work-status.offline {
-  background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
-}
-
-.node-badge {
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 10px;
-  font-weight: 500;
-  flex-shrink: 0;
-  margin-left: 8px;
-}
-
-.device-node.master .node-badge {
-  background: rgba(16, 185, 129, 0.1);
-  color: #059669;
-}
-
-.device-node.slave .node-badge {
-  background: rgba(59, 130, 246, 0.1);
-  color: #2563eb;
-}
-
-.device-node.offline .node-badge {
   background: rgba(239, 68, 68, 0.1);
   color: #dc2626;
 }
@@ -528,13 +542,17 @@ function formatValue(value, unit) {
   gap: 4px;
 }
 
-.node-sn {
-  font-family: 'SF Mono', Monaco, monospace;
-  font-size: 9px;
+.node-name-bottom {
+  font-size: 10px;
+  color: #64748b;
   background: #e2e8f0;
   padding: 2px 6px;
   border-radius: 4px;
   align-self: flex-start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 /* 状态指示 */
