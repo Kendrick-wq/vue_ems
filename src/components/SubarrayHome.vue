@@ -776,7 +776,7 @@ async function goToDetail(clickData) {
   
   // 处理旧格式（从机卡片点击）
   const device = clickData
-  if (!device || device.role === 'master') return
+  if (!device) return
   
   const slaveId = device.slave_id
   const slaveName = device.device_name || '从机#' + slaveId
@@ -891,30 +891,45 @@ function processHomePageData(data) {
   // 更新设备数据（后端字段：subarray_info 数组）
   if (data.subarray_info && Array.isArray(data.subarray_info)) {
     data.subarray_info.forEach(device => {
-      // 适配后端格式：通过 name/slave_name 判断主机/从机
-      if (device.name || !device.slave_name) {
-        // 主机数据（有 name 字段，或无 slave_name）
+      // 适配后端格式：通过 name 匹配配置判断主机/从机
+      const deviceName = device.name
+      
+      // 优先匹配 masterName 作为主设备
+      if (deviceName && deviceName === systemConfig.value.masterName) {
         devicesData.value.master = {
           ...devicesData.value.master,
           pcs: device.pcs || {},
           bms: device.bcmu || {},
-          device_name: systemConfig.value.masterName || device.name || '主机',
+          device_name: systemConfig.value.masterName || deviceName || '主机',
           status: 'online',
           slave_id: 0
         }
-      } else if (device.slave_name) {
-        // 从机数据：通过 slave_name 查找对应的 slave_id
-        const slaveConfig = systemConfig.value.slaves.find(s => s.name === device.slave_name)
-        const slaveId = slaveConfig ? slaveConfig.id : device.slave_name
+      } else {
+        // 尝试在从机配置中按 name 匹配
+        const slaveConfig = systemConfig.value.slaves.find(s => s.name === deviceName)
         
-        const statusInfo = systemConfig.value.slaveStatusMap[slaveId] || {}
-        devicesData.value.slaves[slaveId] = {
-          ...devicesData.value.slaves[slaveId],
-          slave_id: slaveId,
-          device_name: slaveConfig ? slaveConfig.name : device.slave_name,
-          pcs: device.pcs || {},
-          bms: device.bcmu || {},
-          status: statusInfo.online ? 'online' : 'offline'
+        if (slaveConfig) {
+          // 匹配到从机配置
+          const slaveId = slaveConfig.id
+          const statusInfo = systemConfig.value.slaveStatusMap[slaveId] || {}
+          devicesData.value.slaves[slaveId] = {
+            ...devicesData.value.slaves[slaveId],
+            slave_id: slaveId,
+            device_name: slaveConfig.name || deviceName,
+            pcs: device.pcs || {},
+            bms: device.bcmu || {},
+            status: statusInfo.online ? 'online' : 'offline'
+          }
+        } else if (deviceName && !devicesData.value.master) {
+          // 未匹配到任何配置，且当前无主机数据时，回退作为主设备
+          devicesData.value.master = {
+            ...devicesData.value.master,
+            pcs: device.pcs || {},
+            bms: device.bcmu || {},
+            device_name: deviceName || '主机',
+            status: 'online',
+            slave_id: 0
+          }
         }
       }
     })

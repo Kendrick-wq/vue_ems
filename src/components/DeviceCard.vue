@@ -11,9 +11,9 @@
         <div class="header-left">
           <div class="header-tags">
             <span class="node-role">{{ roleText }}</span>
-            <span class="work-status" :class="workStatusClass">{{ workStatusText }}</span>
           </div>
         </div>
+        <span class="work-status" :class="workStatusClass">{{ workStatusText }}</span>
       </div>
       
       <!-- PCS模块 -->
@@ -139,7 +139,7 @@ const nodeClass = computed(() => {
 const workStatusText = computed(() => {
   const workState = deviceData.value.work_state
   if (workState === 0) return '初始化'
-  if (workState === 1) return '停止'
+  if (workState === 1) return '运行'
   if (workState === 2) return '故障'
 
   // 兜底：根据设备状态判断
@@ -153,7 +153,7 @@ const workStatusText = computed(() => {
 const workStatusClass = computed(() => {
   const workState = deviceData.value.work_state
   if (workState === 0) return 'init'
-  if (workState === 1) return 'stopped'
+  if (workState === 1) return 'running'
   if (workState === 2) return 'fault'
 
   const status = deviceData.value.status
@@ -269,6 +269,16 @@ function formatValue(value, unit) {
 .device-node.master {
   border-color: #10b981;
   border-left-width: 4px;
+  cursor: pointer;
+}
+
+.device-node.master:hover {
+  border-color: #059669;
+  box-shadow: 0 8px 24px rgba(16, 185, 129, 0.2);
+}
+
+.device-node.master:active {
+  transform: translateY(0);
 }
 
 .device-node.slave {
@@ -355,6 +365,9 @@ function formatValue(value, unit) {
   padding: 2px 6px;
   border-radius: 4px;
   font-weight: 500;
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: flex-start;
 }
 
 .work-status.online {
@@ -372,9 +385,9 @@ function formatValue(value, unit) {
   color: #64748b;
 }
 
-.work-status.stopped {
-  background: rgba(245, 158, 11, 0.1);
-  color: #d97706;
+.work-status.running {
+  background: rgba(34, 197, 94, 0.1);
+  color: #16a34a;
 }
 
 .work-status.fault {
