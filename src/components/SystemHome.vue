@@ -252,7 +252,7 @@ function goToCluster(clusterId) {
 
 // 查看当前子阵
 function viewCurrentCluster() {
-  const currentClusterId = systemData.value.cluster?.cluster_id || 1
+  const currentClusterId = systemData.value.cluster?.cluster_id || 'subarray1'
   router.push({
     name: 'SubarrayHome',
     params: { clusterId: String(currentClusterId) }

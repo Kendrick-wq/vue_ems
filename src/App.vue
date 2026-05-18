@@ -61,29 +61,33 @@ onMounted(() => {
 })
 
 // deviceinfo 响应加载后，根据角色矫正路由
+// 角色判断依据（来自系统视图 subarray_id=""）：
+// - 系统主机: is_master=true 且 subarrays.length > 0
+// - 子阵主机: is_master=true 且 subarrays.length === 0
+// - 从机: is_master=false
 watch(() => systemData.value.cluster?.system_id, (systemId) => {
   if (!systemId) return
-  
+
   const isSystemMaster = systemData.value.cluster?.is_system_master
   const isSubarrayMaster = systemData.value.cluster?.is_subarray_master
   const subarrayId = systemData.value.cluster?.cluster_id
   const currentRoute = router.currentRoute.value
-  
+
   if (isSystemMaster) {
-    // 系统主机：从机首页需要跳回系统首页
-    if (currentRoute.name === 'SlaveHome') {
+    // 系统主机：展示系统视图（所有子阵概览）
+    if (currentRoute.name !== 'SystemHome') {
       router.replace({ name: 'SystemHome' })
     }
   } else if (isSubarrayMaster) {
-    // 子阵主机：应该在子阵详情页
-    if (currentRoute.name === 'SystemHome' || currentRoute.name === 'SlaveHome') {
+    // 子阵主机：直接进子阵页，不需要系统视图
+    if (currentRoute.name !== 'SubarrayHome') {
       router.replace({
         name: 'SubarrayHome',
         params: { clusterId: subarrayId || 'subarray1' }
       })
     }
   } else {
-    // 从机：应该在从机首页
+    // 从机：展示从机首页
     if (currentRoute.name !== 'SlaveHome') {
       router.replace({ name: 'SlaveHome', params: { id: 1 } })
     }

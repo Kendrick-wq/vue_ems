@@ -151,7 +151,7 @@ import TopologyDiagram from './TopologyDiagram.vue'
 const props = defineProps({
   clusterId: {
     type: String,
-    default: '1'
+    default: 'subarray1'
   }
 })
 
@@ -854,7 +854,13 @@ onMounted(() => {
   }
 
   // 启动首页定时查询 (deviceStatus + masterHome)
-  startMasterHomeTimer(props.clusterId)
+  // App.vue 已统一发送系统视图并路由，此时 cluster_id 应该已就绪
+  const effectiveClusterId = systemData.value.cluster?.cluster_id || props.clusterId
+  if (effectiveClusterId) {
+    startMasterHomeTimer(effectiveClusterId)
+  } else {
+    console.warn('[SubarrayHome] 未获取到有效的 cluster_id，跳过定时器启动')
+  }
 
   // 注册消息处理器以更新设备数据
   unsubscribeMessage = onMessage((response) => {

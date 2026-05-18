@@ -118,6 +118,10 @@ function connectWebSocket() {
       updateWsStatus('connected', '已连接')
       // 启动全局定时查询 (GetSytemInfoCmd)
       startSystemInfoTimer()
+      // 连接成功后立即获取系统视图，用于判断角色和子阵ID
+      setTimeout(() => {
+        fetchDeviceStatus()
+      }, 100)
     }
     
     ws.onmessage = async (event) => {
@@ -437,100 +441,191 @@ function updateSystemInfoData(infoArray) {
 }
 
 // 更新系统数据 (rpc/system/deviceinfo 响应)
+// 支持新协议三种视图: system / subarray / all
 function updateSystemData(data) {
   if (data.running !== undefined) {
     systemData.value.running = data.running
   }
 
-  // 从 data.devices 中获取实际数据
-  const devices = data.devices || data
+  const view = data.view
 
-  // 系统信息
-  if (devices.system) {
-    systemData.value.cluster = {
-      cluster_id: devices.subarray?.id || '',
-      system_id: devices.system.id,
-      is_system_master: devices.system.is_master,
-      is_subarray_master: devices.subarray?.is_master || false,
-      enabled_slave_count: devices.subarray?.enabled_slave_count || 0,
-      slave_count: devices.subarray?.slave_count || 0
-    }
-    systemData.value.clusterName = devices.subarray?.id || ''
+  if (view === 'system') {
+    handleSystemView(data.system)
+  } else if (view === 'subarray') {
+    handleSubarrayView(data.subarray)
+  } else if (view === 'all') {
+    handleAllView(data.system)
+  } else if (view === 'slave') {
+    handleSlaveView(data.slave)
   }
-
-  // 子阵信息
-  if (devices.subarray) {
-    // 从 connections 中找主机信息
-    if (devices.subarray.connections && Array.isArray(devices.subarray.connections)) {
-      const masterConn = devices.subarray.connections.find(c => c.role === 'master')
-      if (masterConn) {
-        systemData.value.masterName = masterConn.name
-        systemData.value.masterIp = masterConn.ip || ''
-        systemData.value.masterSn = masterConn.sn || ''
-      }
-
-      const slaves = []
-      const statusMap = {}
-      let online = 0
-      let offline = 0
-
-      devices.subarray.connections.forEach(conn => {
-        const isMaster = conn.role === 'master'
-        if (conn.enabled && !isMaster) {
-          slaves.push({
-            id: conn.name,
-            name: conn.name || '从机',
-            enabled: conn.enabled,
-            role: conn.role || 'slave'
-          })
-
-          if (conn.online) {
-            online++
-          } else {
-            offline++
-          }
-        }
-
-        statusMap[conn.name] = {
-          online: conn.online,
-          ip: conn.ip || '',
-          sn: conn.sn || '',
-          status: conn.online ? 'Connected' : 'Disconnected',
-          role: conn.role || (isMaster ? 'master' : 'slave'),
-          work_state: conn.work_state
-        }
-      })
-
-      slaves.sort((a, b) => (a.role || '').localeCompare(b.role || ''))
-      systemData.value.slaves = slaves
-      systemData.value.slaveStatusMap = statusMap
-      systemData.value.onlineCount = online
-      systemData.value.offlineCount = offline
-    }
-  }
-
-  // 系统级连接（子阵主机列表，仅系统主机有）
-  if (devices.system?.connections && Array.isArray(devices.system.connections)) {
-    systemData.value.clusters = devices.system.connections.map(conn => ({
-      cluster_id: conn.name.replace('master', 'subarray'), // master2 -> subarray2
-      status: conn.online ? 'running' : 'offline',
-      total_power: 0,
-      system_soc: 0,
-      online_slave_count: conn.enabled_slave_count || 0,
-      slave_count: conn.slave_count || 0,
-      warning_count: 0,
-      masterInfo: {
-        name: conn.name,
-        ip: conn.ip || '--',
-        sn: conn.sn || '--'
-      }
-    }))
-  } else if (devices.system?.is_master === false) {
-    // 非系统主机，清空 clusters
-    systemData.value.clusters = []
-  }
+  // 旧格式兼容代码已删除，后端统一返回带 view 字段的新协议
 
   lastUpdateTime.value = new Date().toLocaleTimeString('zh-CN')
+}
+
+// 统一处理 connections 数组，更新 slaves、master 信息和在线统计
+function processConnections(connections) {
+  if (!Array.isArray(connections)) return
+
+  const masterConn = connections.find(c => c.role === 'master')
+  if (masterConn) {
+    systemData.value.masterName = masterConn.name || ''
+    systemData.value.masterIp = masterConn.ip || ''
+    systemData.value.masterSn = masterConn.sn || ''
+  }
+
+  const slaves = []
+  const statusMap = {}
+  let online = 0
+  let offline = 0
+
+  connections.forEach(conn => {
+    const isMaster = conn.role === 'master'
+    if (!isMaster) {
+      slaves.push({
+        id: conn.name,
+        name: conn.name || '从机',
+        enabled: conn.enabled !== false,
+        role: conn.role || 'slave'
+      })
+
+      if (conn.online) {
+        online++
+      } else {
+        offline++
+      }
+    }
+
+    statusMap[conn.name] = {
+      online: conn.online,
+      ip: conn.ip || '',
+      sn: conn.sn || '',
+      status: conn.online ? 'Connected' : 'Disconnected',
+      role: conn.role || (isMaster ? 'master' : 'slave'),
+      work_state: conn.work_state
+    }
+  })
+
+  slaves.sort((a, b) => (a.role || '').localeCompare(b.role || ''))
+  systemData.value.slaves = slaves
+  systemData.value.slaveStatusMap = statusMap
+  systemData.value.onlineCount = online
+  systemData.value.offlineCount = offline
+}
+
+// 系统视图：只更新 clusters 列表
+function handleSystemView(system) {
+  if (!system) return
+
+  // 系统视图只由系统主机返回，接收者一定是系统主机
+  // cluster_id 从 subarrays 中找 role === 'master' 的项推导
+  const masterSubarray = system.subarrays?.find(s => s.role === 'master')
+  const localSubarrayId = masterSubarray?.subarray_id || ''
+
+  systemData.value.cluster = {
+    cluster_id: localSubarrayId,
+    system_id: system.id || '',
+    is_system_master: true,
+    is_subarray_master: false,
+    enabled_slave_count: 0,
+    slave_count: system.subarray_count || 0
+  }
+  systemData.value.clusterName = localSubarrayId
+
+  if (system.subarrays && Array.isArray(system.subarrays)) {
+    systemData.value.clusters = system.subarrays.map(sub => ({
+      cluster_id: sub.subarray_id || '',
+      status: sub.host_online ? 'running' : 'offline',
+      total_power: 0,
+      system_soc: 0,
+      online_slave_count: sub.enabled_slave_count || 0,
+      slave_count: sub.slave_count || 0,
+      warning_count: 0,
+      masterInfo: {
+        name: sub.host_name || sub.subarray_id || '',
+        ip: sub.host_ip || '--',
+        sn: sub.host_sn || '--'
+      }
+    }))
+  }
+}
+
+// 子阵视图：更新 cluster 信息和 connections
+function handleSubarrayView(subarray) {
+  if (!subarray) return
+
+  systemData.value.cluster = {
+    cluster_id: subarray.subarray_id || '',
+    system_id: subarray.system_id || '',
+    is_system_master: false,
+    is_subarray_master: subarray.is_master || false,
+    enabled_slave_count: subarray.enabled_slave_count || 0,
+    slave_count: subarray.slave_count || 0
+  }
+  systemData.value.clusterName = subarray.subarray_id || ''
+
+  processConnections(subarray.connections)
+}
+
+// 全量视图：同时更新 clusters 列表和当前子阵的 connections
+function handleAllView(system) {
+  if (!system) return
+
+  // 更新系统级信息（保留已有的 cluster_id）
+  const currentClusterId = systemData.value.cluster.cluster_id
+  systemData.value.cluster = {
+    ...systemData.value.cluster,
+    system_id: system.id || '',
+    is_system_master: system.is_master,
+    slave_count: system.subarray_count || 0
+  }
+
+  if (system.subarrays && Array.isArray(system.subarrays)) {
+    systemData.value.clusters = system.subarrays.map(sub => ({
+      cluster_id: sub.subarray_id || '',
+      status: sub.host_online ? 'running' : 'offline',
+      total_power: 0,
+      system_soc: 0,
+      online_slave_count: sub.enabled_slave_count || 0,
+      slave_count: sub.slave_count || 0,
+      warning_count: 0,
+      masterInfo: {
+        name: sub.host_name || sub.subarray_id || '',
+        ip: sub.host_ip || '--',
+        sn: sub.host_sn || '--'
+      }
+    }))
+
+    // 更新当前子阵的详细连接信息
+    const currentSubarray = system.subarrays.find(s => s.subarray_id === currentClusterId)
+    if (currentSubarray && currentSubarray.connections) {
+      systemData.value.cluster.is_subarray_master = currentSubarray.is_master || false
+      systemData.value.cluster.enabled_slave_count = currentSubarray.enabled_slave_count || 0
+      systemData.value.cluster.slave_count = currentSubarray.slave_count || 0
+      systemData.value.clusterName = currentSubarray.subarray_id || ''
+      processConnections(currentSubarray.connections)
+    }
+  }
+}
+
+// 从机视图：仅返回身份信息
+function handleSlaveView(slave) {
+  if (!slave) return
+
+  systemData.value.cluster = {
+    cluster_id: slave.subarray_id || '',
+    system_id: slave.system_id || '',
+    is_system_master: false,
+    is_subarray_master: false,
+    enabled_slave_count: 0,
+    slave_count: 0
+  }
+  systemData.value.clusterName = slave.subarray_id || ''
+  // 从机清空从机相关数据
+  systemData.value.slaves = []
+  systemData.value.slaveStatusMap = {}
+  systemData.value.onlineCount = 0
+  systemData.value.offlineCount = 0
 }
 
 // 更新首页数据
